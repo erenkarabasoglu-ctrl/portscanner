@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, 'database.json');
 const HTML_FILE = path.join(__dirname, 'index.html');
 
@@ -96,7 +96,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204); res.end(); return;
   }
 
-  if (req.url === '/bg.webp') {
+  const reqUrl = req.url.split('?')[0];
+
+  if (reqUrl === '/bg.webp') {
     fs.readFile(path.join(__dirname, 'bg.webp'), (err, data) => {
       if(err) { res.writeHead(404); res.end(); }
       else { res.writeHead(200, { 'Content-Type': 'image/webp' }); res.end(data); }
@@ -104,7 +106,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === '/logo.jpg' || req.url === '/portscanner-og.jpg') {
+  if (reqUrl === '/logo.jpg' || reqUrl === '/portscanner-og.jpg') {
     fs.readFile(path.join(__dirname, 'logo.jpg'), (err, data) => {
       if(err) { res.writeHead(404); res.end(); }
       else { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); res.end(data); }
@@ -112,7 +114,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === '/api/events') {
+  if (reqUrl === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
     const db = readDB();
     res.write(`data: ${JSON.stringify({...db, users: undefined})}\n\n`);
@@ -122,7 +124,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // AUTH ENDPOINTS
-  if (req.method === 'POST' && req.url === '/api/auth/login') {
+  if (req.method === 'POST' && reqUrl === '/api/auth/login') {
     try {
       const payload = await parseBody(req);
       const db = readDB();

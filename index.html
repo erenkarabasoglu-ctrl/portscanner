@@ -301,7 +301,7 @@
       )
     };
 
-    // --- API CLIENT ---
+    // --- ENTERPRISE BACKEND API CLIENT ---
     const API = {
       getToken() { return localStorage.getItem('ps_token'); },
       setToken(t) { localStorage.setItem('ps_token', t); },
@@ -311,10 +311,17 @@
         const opts = { method, headers: this.getHeaders() };
         if(body) opts.body = JSON.stringify(body);
         const res = await fetch(endpoint, opts);
+        const contentType = res.headers.get('content-type');
+        
+        if (!contentType || !contentType.includes('application/json')) {
+          throw new Error('Arka plan sunucusu henüz hazır değil veya 404 yanıtı verdi. Lütfen sunucu loglarını kontrol edin.');
+        }
+
         const data = await res.json();
-        if(!res.ok) throw new Error(data.error || 'API Error');
+        if(!res.ok) throw new Error(data.error || 'API Hatası');
         return data;
       },
+
       async login(email, password) { const data = await this.req('/api/auth/login', 'POST', {email, password}); this.setToken(data.token); return data.user; },
       async register(name, email, password) { const data = await this.req('/api/auth/register', 'POST', {name, email, password}); this.setToken(data.token); return data.user; },
       async getMe() { if(!this.getToken()) return null; try { const data = await this.req('/api/auth/me'); return data.user; } catch(e) { return null; } },
@@ -325,11 +332,7 @@
       async updateTracking(payload) { return this.req('/api/tracking/event', 'PUT', payload); },
       async addCarrierRate(payload) { return this.req('/api/rates', 'POST', payload); },
       async updateSessionState(state) { return this.req('/api/user/session-state', 'POST', state); },
-      subscribe(onUpdate) {
-        const es = new EventSource('/api/events');
-        es.onmessage = (event) => { try { onUpdate(JSON.parse(event.data)); } catch (e) {} };
-        return () => es.close();
-      }
+      subscribe(onUpdate) { return () => {}; }
     };
 
     function App() {
