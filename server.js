@@ -506,17 +506,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // HTML sunumu
-  if (req.url === '/' || req.url.startsWith('/?')) {
+  // HTML sunumu (Tüm web sayfaları için)
+  if (!reqUrl.startsWith('/api')) {
     fs.readFile(HTML_FILE, (err, data) => {
-      if (err) { res.writeHead(500); res.end('Error'); return; }
+      if (err) { res.writeHead(500); res.end('Error loading index.html'); return; }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(data);
     });
     return;
   }
 
-  res.writeHead(404); res.end('Not Found');
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Endpoint bulunamadı (404)' }));
 });
 
 server.listen(PORT, '0.0.0.0', () => {
