@@ -8,10 +8,13 @@ const DB_FILE = path.join(__dirname, 'database.json');
 const HTML_FILE = path.join(__dirname, 'index.html');
 
 function initDB() {
+  // SHA-256 hash of '123456'
+  const defaultAdminHash = crypto.createHash('sha256').update('123456').digest('hex');
+
   if (!fs.existsSync(DB_FILE)) {
     const defaultData = {
       users: [
-        { id: 'usr_admin', email: 'admin@portscanner.com', password: 'hash_123456', name: 'Super Admin', role: 'admin' }
+        { id: 'usr_admin', email: 'admin@portscanner.com', password: defaultAdminHash, name: 'Super Admin', role: 'admin' }
       ],
       requests: [],
       trackings: [],
@@ -30,9 +33,28 @@ function initDB() {
   } else {
     try {
       const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-      if (!data.users) data.users = [
-         { id: 'usr_admin', email: 'admin@portscanner.com', password: 'hash_123456', name: 'Super Admin', role: 'admin' }
-      ];
+      if (!data.users) {
+        data.users = [
+          { id: 'usr_admin', email: 'admin@portscanner.com', password: defaultAdminHash, name: 'Super Admin', role: 'admin' }
+        ];
+      } else {
+        // Eski 'hash_' prefix şifrelerini SHA-256'ya migrate et
+        let migrated = false;
+        data.users = data.users.map(u => {
+          if (u.password && u.password.startsWith('hash_')) {
+            const rawPass = u.password.replace('hash_', '');
+            u.password = crypto.createHash('sha256').update(rawPass).digest('hex');
+            migrated = true;
+          }
+          return u;
+        });
+        // Admin kullanıcısı yoksa ekle
+        if (!data.users.find(u => u.id === 'usr_admin')) {
+          data.users.unshift({ id: 'usr_admin', email: 'admin@portscanner.com', password: defaultAdminHash, name: 'Super Admin', role: 'admin' });
+          migrated = true;
+        }
+        if (migrated) fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      }
       if (!data.carrier_rates || data.carrier_rates.length < 5) {
         data.carrier_rates = [
           { id: 'rate_1', origin: 'İzmit', destination: 'Pire', carrier: 'MSC', buy_price: 1800, default_markup: 15, transit_days: 3, type: 'Direkt' },
@@ -49,6 +71,7 @@ function initDB() {
     } catch(e) {}
   }
 }
+
 initDB();
 
 function readDB() {
@@ -60,13 +83,29 @@ function writeDB(data) {
 
 const sseClients = new Set();
 function broadcastSSE(data) {
-  // Parolaları çıkartarak yolla (Güvenlik)
-  const safeData = { ...data, users: undefined };
+  // Hassas verileri temizle: kullanıcı şifreleri, operasyon marjı (buy_price, net_profit)
+  const sanitizedRequests = (data.requests || []).map(r => ({
+    ...r,
+    quotes: (r.quotes || []).map(q => {
+      const { buy_price, net_profit, ...safeQuote } = q;
+      return safeQuote;
+    })
+  }));
+
+  const safeData = {
+    requests: sanitizedRequests,
+    trackings: data.trackings,
+    exchange_listings: data.exchange_listings,
+    carrier_rates: data.carrier_rates
+    // users alanı kasıtlı olarak dahil edilmiyor
+  };
+
   const payload = `data: ${JSON.stringify(safeData)}\n\n`;
   for (const client of sseClients) {
     client.write(payload);
   }
 }
+
 
 // Basit Token => User Map
 const activeTokens = new Map();
@@ -128,7 +167,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await parseBody(req);
       const db = readDB();
-      const user = db.users.find(u => u.email === payload.email && u.password === 'hash_' + payload.password);
+      const hashedInput = crypto.createHash('sha256').update(payload.password || '').digest('hex');
+      const user = db.users.find(u => u.email === payload.email && u.password === hashedInput);
       if(!user) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Geçersiz e-posta veya şifre' }));
@@ -143,6 +183,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+
   if (req.method === 'POST' && req.url === '/api/auth/register') {
     try {
       const payload = await parseBody(req);
@@ -152,10 +193,11 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Bu e-posta zaten kayıtlı.' }));
         return;
       }
+      const hashedPassword = crypto.createHash('sha256').update(payload.password || '').digest('hex');
       const newUser = {
         id: 'usr_' + Date.now(),
         email: payload.email,
-        password: 'hash_' + payload.password, // basit hash simülasyonu
+        password: hashedPassword,
         name: payload.name || payload.email.split('@')[0],
         role: 'customer'
       };
@@ -170,6 +212,7 @@ const server = http.createServer(async (req, res) => {
     } catch(err) { res.writeHead(400); res.end(); }
     return;
   }
+
 
   if (req.method === 'GET' && req.url === '/api/auth/me') {
     const user = getUserFromToken(req);
@@ -252,6 +295,76 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // EXCHANGE MARKETPLACE ENDPOINTS (GET & POST LISTINGS)
+  if (req.method === 'GET' && req.url === '/api/exchange') {
+    const db = readDB();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(db.exchange_listings || []));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/exchange') {
+    try {
+      const user = getUserFromToken(req);
+      if(!user) { res.writeHead(401); res.end('Unauthorized'); return; }
+
+      const payload = await parseBody(req);
+      const db = readDB();
+      if (!db.exchange_listings) db.exchange_listings = [];
+
+      const newListing = {
+        id: `${payload.side === 'SELL' ? 'SPOT' : 'DEMAND'}-${Math.floor(1000 + Math.random() * 9000)}`,
+        origin: payload.origin,
+        destination: payload.destination,
+        type: payload.type,
+        carrier: payload.carrier,
+        price: Number(payload.price),
+        listPrice: Math.round(Number(payload.price) * 1.15),
+        seller: user.name || 'Kurumsal Firmam A.Ş.',
+        status: 'OPEN',
+        etd: '22 Eylül 2026',
+        cutoff: '19 Eylül 2026',
+        freeTime: '14 Gün Kombine',
+        guaranteed: true,
+        side: payload.side || 'SELL',
+        slotsAvailable: Number(payload.slotsAvailable || 5),
+        createdAt: new Date().toISOString()
+      };
+
+      db.exchange_listings.unshift(newListing);
+      writeDB(db);
+      broadcastSSE(db);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(newListing));
+    } catch(err) { res.writeHead(400); res.end(); }
+    return;
+  }
+
+  // ENGINE 1: DOCUMENTS OCR PARSE & PERSISTENCE ENDPOINT
+  if (req.method === 'POST' && req.url === '/api/documents/parse') {
+    try {
+      const user = getUserFromToken(req);
+      if(!user) { res.writeHead(401); res.end('Unauthorized'); return; }
+
+      const payload = await parseBody(req);
+      const db = readDB();
+      const reqIndex = db.requests.findIndex(r => r.id === payload.req_id);
+      if (reqIndex > -1) {
+        if (!db.requests[reqIndex].parsed_documents) db.requests[reqIndex].parsed_documents = [];
+        db.requests[reqIndex].parsed_documents.unshift({
+          ...payload.doc,
+          parsedAt: new Date().toISOString()
+        });
+        writeDB(db);
+        broadcastSSE(db);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch(err) { res.writeHead(400); res.end(); }
+    return;
+  }
+
   // CREATE REQUEST & INSTANT AUTOMATIC FREIGHT QUOTING ENGINE (OTOMATİK ANLIK FİYAT VERME MOTORU)
   if (req.method === 'POST' && req.url === '/api/requests') {
     try {
@@ -263,17 +376,48 @@ const server = http.createServer(async (req, res) => {
 
       const origin = payload.origin || 'İzmit';
       const destination = payload.destination || 'Pire';
+      const cargoType = payload.cargo_type || 'Konteyner';
 
-      // 1. Navlun Kütüphanesindeki Armatör Alış Fiyatlarını Taraması
+      // 1. UN/LOCODE & LİMAN HARİTASI (UN/LOCODE Dictionary)
+      const portDict = {
+        'izmit': { code: 'TRIZM', country: 'Türkiye', region: 'Marmara' },
+        'ambarli': { code: 'TRAMB', country: 'Türkiye', region: 'Marmara' },
+        'kumport': { code: 'TRAMB', country: 'Türkiye', region: 'Marmara' },
+        'marport': { code: 'TRAMB', country: 'Türkiye', region: 'Marmara' },
+        'yilport': { code: 'TRYIL', country: 'Türkiye', region: 'Marmara' },
+        'gemlik': { code: 'TRGEM', country: 'Türkiye', region: 'Marmara' },
+        'pendik': { code: 'TRPEN', country: 'Türkiye', region: 'Marmara' },
+        'mersin': { code: 'TRMER', country: 'Türkiye', region: 'Akdeniz' },
+        'iskenderun': { code: 'TRISK', country: 'Türkiye', region: 'Akdeniz' },
+        'aliaga': { code: 'TRALI', country: 'Türkiye', region: 'Ege' },
+        'pire': { code: 'GRPIR', country: 'Yunanistan', region: 'Akdeniz' },
+        'piraeus': { code: 'GRPIR', country: 'Yunanistan', region: 'Akdeniz' },
+        'trieste': { code: 'ITTRS', country: 'İtalya', region: 'Adriyatik' },
+        'setes': { code: 'FRSET', country: 'Fransa', region: 'Batı Akdeniz' },
+        'sete': { code: 'FRSET', country: 'Fransa', region: 'Batı Akdeniz' },
+        'rotterdam': { code: 'NLRTM', country: 'Hollanda', region: 'Kuzey Avrupa' },
+        'antwerp': { code: 'BEANR', country: 'Belçika', region: 'Kuzey Avrupa' },
+        'shanghai': { code: 'CNSHA', country: 'Çin', region: 'Uzak Doğu' },
+        'ningbo': { code: 'CNNGB', country: 'Çin', region: 'Uzak Doğu' },
+        'alexandria': { code: 'EGALY', country: 'Mısır', region: 'Kuzey Afrika' },
+        'new york': { code: 'USNYC', country: 'ABD', region: 'Kuzey Amerika' }
+      };
+
+      const normOrigin = origin.toLowerCase().trim();
+      const normDest = destination.toLowerCase().trim();
+
+      const origInfo = portDict[normOrigin] || { code: normOrigin.substring(0, 5).toUpperCase(), country: 'Global Port', region: 'Genel' };
+      const destInfo = portDict[normDest] || { code: normDest.substring(0, 5).toUpperCase(), country: 'Global Port', region: 'Genel' };
+
+      // 2. Navlun Kütüphanesindeki Birebir Armatör Alış Fiyatlarını Taraması
       const matchedRates = (db.carrier_rates || []).filter(r => 
-        r.origin.toLowerCase().trim() === origin.toLowerCase().trim() &&
-        r.destination.toLowerCase().trim() === destination.toLowerCase().trim()
+        r.origin.toLowerCase().trim() === normOrigin &&
+        r.destination.toLowerCase().trim() === normDest
       );
 
       let autoQuotes = [];
 
       if (matchedRates.length > 0) {
-        // Kütüphanede birebir armatör tarife eşleşmesi varsa otomatik fiyat üret
         autoQuotes = matchedRates.map(r => {
           const buyPrice = Number(r.buy_price);
           const markup = Number(r.default_markup || 15);
@@ -281,13 +425,13 @@ const server = http.createServer(async (req, res) => {
           const sellPrice = buyPrice + netProfit;
           
           return {
-            id: 'Q-AUTO-' + Math.floor(10000 + Math.random() * 90000),
+            id: 'Q-VERIFIED-' + Math.floor(10000 + Math.random() * 90000),
             carrier: r.carrier,
             verified: true,
-            reliability: 98,
+            reliability: 99,
             capacity: 'GUARANTEED',
             type: r.type || 'Direkt',
-            transit_days: Number(r.transit_days || 5),
+            transit_days: Number(r.transit_days || 4),
             price: sellPrice,
             buy_price: buyPrice,
             net_profit: netProfit,
@@ -295,56 +439,203 @@ const server = http.createServer(async (req, res) => {
             thc_cost: Math.round(sellPrice * 0.12),
             isps_cost: sellPrice - Math.round(sellPrice * 0.82) - Math.round(sellPrice * 0.12),
             free_time_days: 14,
-            co2_emissions: '0.62 Ton CO2 (%18 Yeşil)',
-            vessel_name: `${r.carrier} EXPRESS`,
-            service_line: 'Direct Spot Line',
-            pol_code: origin.substring(0, 3).toUpperCase() + ' PORT',
-            pod_code: destination.substring(0, 3).toUpperCase() + ' PORT',
+            cargo_specs: cargoType === 'Kuru Yük' ? 'Coaster / Bulk | FIOST Şartları ($/Ton)' : (cargoType === 'Ro-Ro' ? 'Sürücülü Dorse / Tır | Akdeniz Ro-Ro' : '40\' High Cube (HC) Standard Dry'),
+            co2_emissions: '0.58 Ton CO2 (%20 Yeşil)',
+            vessel_name: `${r.carrier} ENTERPRISE`,
+            service_line: `${origInfo.code} - ${destInfo.code} Direct Line`,
+            pol_code: `${origInfo.code} - ${origin.toUpperCase()}`,
+            pod_code: `${destInfo.code} - ${destination.toUpperCase()}`,
             is_recommended: true
           };
         });
       } else {
-        // Birebir eşleşme yoksa Algoritmik Spot Piyasa Navlun Matrisi Üret (Global & Lokal Armatör Havuzu)
-        // DÖVİZ KURU MANTIĞI: Tüm alış navlunları USD paritesi ($1.00 USD = 1.00 USD) üzerinden hesaplanır.
-        const baseBuy = Math.floor(1450 + Math.random() * 650); // $1450 - $2100 USD
-        const carriersList = [
-          { carrier: 'MSC', type: 'Direkt', transit: 4, markup: 15, service: 'Dragon Express' },
-          { carrier: 'MAERSK LINE', type: 'Direkt', transit: 3, markup: 18, service: 'AE15 Service' },
-          { carrier: 'DFDS Seaways', type: 'Ro-Ro Direkt', transit: 3, markup: 14, service: 'Akdeniz Ro-Ro Ekspres' },
-          { carrier: 'ARKAS Line', type: 'Bölgesel Direkt', transit: 4, markup: 12, service: 'Levant Express' },
-          { carrier: 'TURKON Line', type: 'Ekspres Direkt', transit: 5, markup: 15, service: 'Amerikan Ekspres' },
-          { carrier: 'CMA CGM', type: 'Aktarmalı', transit: 7, markup: 10, service: 'MEX Line' },
-          { carrier: 'MEDKON Lines', type: 'Kabotaj / Feeder', transit: 2, markup: 16, service: 'Karadeniz Feeder' }
-        ];
+        // 3. YÜK TİPİNE ÖZEL GERÇEK B2B AUTOMATION ENGINE (COASTER, RO-RO, KONTEYNER, LİKİT)
+        if (cargoType === 'Kuru Yük' || cargoType.includes('Kuru')) {
+          // KURU YÜK & COASTER (3,000 - 12,000 DWT Coaster & Bulk Gemileri)
+          const coasterCarriers = [
+            { carrier: 'KAPTAŞ MARITIME', coaster_type: '3,500 DWT Coaster', rate_per_ton: 38, transit: 4, fiost: 'FIOST (Free In/Out Stowed)', service: 'Black Sea / Med Coaster Service' },
+            { carrier: 'ŞAHİN DENİZCİLİK', coaster_type: '5,000 DWT Bulk Carrier', rate_per_ton: 42, transit: 5, fiost: 'FIOST (Loading 1500t/pd)', service: 'Mediterranean Bulk Line' },
+            { carrier: 'CENK GROUP', coaster_type: '7,500 DWT General Cargo', rate_per_ton: 36, transit: 4, fiost: 'FILO (Free In Liner Out)', service: 'Marmara-Levant Express' },
+            { carrier: 'VALLETTA SHIPPING', coaster_type: '12,000 DWT Handysize', rate_per_ton: 31, transit: 6, fiost: 'FIOST (Customs Discharging Included)', service: 'Euro-Med Bulk Service' }
+          ];
 
-        autoQuotes = carriersList.map((item, idx) => {
-          const buyPrice = baseBuy + (idx * 120);
-          const netProfit = Math.round(buyPrice * (item.markup / 100));
-          const sellPrice = buyPrice + netProfit;
+          const cargoTonnage = Number(payload.amount) || 1500; // Varsayılan 1500 Ton dökme yük
+          const draftLimit = Number(payload.draft_limit) || 0; // Metre su çekimi sınırı
+          const stowageFactor = Number(payload.stowage_factor) || 0; // M3/Ton
+          const fiostTerms = payload.fiost_terms || 'FIOST'; // FIOST, FILO, Gross Terms
 
-          return {
-            id: 'Q-SPOT-' + Math.floor(10000 + Math.random() * 90000),
-            carrier: item.carrier,
-            verified: true,
-            reliability: 94 + (idx % 5),
-            capacity: idx % 2 === 0 ? 'GUARANTEED' : 'AVAILABLE',
-            type: item.type,
-            transit_days: item.transit,
-            price: sellPrice,
-            buy_price: buyPrice,
-            net_profit: netProfit,
-            ocean_freight: Math.round(sellPrice * 0.82),
-            thc_cost: Math.round(sellPrice * 0.12),
-            isps_cost: sellPrice - Math.round(sellPrice * 0.82) - Math.round(sellPrice * 0.12),
-            free_time_days: 14,
-            co2_emissions: `${(0.45 + (idx * 0.05)).toFixed(2)} Ton CO2`,
-            vessel_name: `${item.carrier} GLOBETROTTER`,
-            service_line: item.service,
-            pol_code: origin.substring(0, 3).toUpperCase() + ' PORT',
-            pod_code: destination.substring(0, 3).toUpperCase() + ' PORT',
-            is_recommended: idx === 0
-          };
-        });
+          autoQuotes = coasterCarriers.map((item, idx) => {
+            let ratePerTon = item.rate_per_ton;
+            // Stowage factor adjustment if cargo is bulky (> 1.4 m3/t)
+            if (stowageFactor > 1.4) {
+              ratePerTon += Math.round((stowageFactor - 1.4) * 8);
+            }
+            // FIOST term adjustment
+            if (fiostTerms === 'FILO') ratePerTon += 4;
+            if (fiostTerms === 'Gross Terms') ratePerTon += 9;
+
+            const oceanFreightTotal = cargoTonnage * ratePerTon;
+            const portDues = Math.round(oceanFreightTotal * 0.08); // Liman harçları
+            const profit = Math.round(oceanFreightTotal * 0.12);
+            const totalSell = oceanFreightTotal + portDues + profit;
+
+            // Draft restriction warning check
+            const vesselDraftReq = 5.5 + (idx * 0.8);
+            const draftWarning = (draftLimit > 0 && draftLimit < vesselDraftReq) ? ` ⚠ Draft Uyarısı: Liman Max ${draftLimit}m (Gemi ${vesselDraftReq.toFixed(1)}m)` : '';
+
+            return {
+              id: 'Q-BULK-' + Math.floor(10000 + Math.random() * 90000),
+              carrier: item.carrier,
+              verified: true,
+              reliability: 95 + (idx % 4),
+              capacity: (draftLimit > 0 && draftLimit < vesselDraftReq) ? 'RESTRICTED' : 'GUARANTEED',
+              type: 'Coaster / Dökme Kargo',
+              transit_days: item.transit,
+              price: totalSell,
+              unit_price_per_ton: ratePerTon,
+              tonnage_amount: cargoTonnage,
+              buy_price: oceanFreightTotal,
+              net_profit: profit,
+              ocean_freight: oceanFreightTotal,
+              thc_cost: portDues,
+              isps_cost: Math.round(portDues * 0.15),
+              free_time_days: 5, // Dökme yükte 5 gün starya süresi
+              cargo_specs: `${item.coaster_type} | ${fiostTerms} Şartları | $${ratePerTon}/Ton${draftWarning}`,
+              co2_emissions: `${(0.32 + (idx * 0.04)).toFixed(2)} Ton CO2`,
+              vessel_name: `${item.carrier} M/V EXPRESS`,
+              service_line: item.service,
+              pol_code: `${origInfo.code} - ${origin.toUpperCase()}`,
+              pod_code: `${destInfo.code} - ${destination.toUpperCase()}`,
+              is_recommended: idx === 0 && (!draftLimit || draftLimit >= vesselDraftReq)
+            };
+          });
+
+        } else if (cargoType === 'Ro-Ro' || cargoType.includes('Ro')) {
+          // RO-RO & TEKERLEKLİ ARAÇ / TIR / DORSE (DFDS, U.N. RO-RO, GRIMALDI)
+          const roroCarriers = [
+            { carrier: 'DFDS SEAWAYS', roro_type: 'Sürücülü Tır / Dorse (16.5m)', base: 1650, transit: 3, service: 'Pendik - Trieste Ekspres Ro-Ro' },
+            { carrier: 'GRIMALDI LINES', roro_type: 'Sürücüsüz Dorse / Yük', base: 1480, transit: 4, service: 'Akdeniz Ro-Ro & Car Carrier' },
+            { carrier: 'U.N. RO-RO (DFDS)', roro_type: 'Proje & Ağır Vasita Ro-Ro', base: 1820, transit: 3, service: 'Yalova - Sete Direct Line' }
+          ];
+
+          autoQuotes = roroCarriers.map((item, idx) => {
+            const buyPrice = item.base;
+            const bafSurcharge = 120; // Fuel Surcharge
+            const driverCabinCost = 150;
+            const profit = Math.round(buyPrice * 0.15);
+            const totalSell = buyPrice + bafSurcharge + driverCabinCost + profit;
+
+            return {
+              id: 'Q-RORO-' + Math.floor(10000 + Math.random() * 90000),
+              carrier: item.carrier,
+              verified: true,
+              reliability: 98,
+              capacity: 'GUARANTEED',
+              type: 'Ro-Ro Direkt Sefer',
+              transit_days: item.transit,
+              price: totalSell,
+              buy_price: buyPrice,
+              net_profit: profit,
+              ocean_freight: buyPrice,
+              thc_cost: bafSurcharge,
+              isps_cost: driverCabinCost,
+              free_time_days: 7,
+              cargo_specs: `${item.roro_type} | Şoför Kabin & BAF Dahil`,
+              co2_emissions: '0.41 Ton CO2 (%22 Yeşil)',
+              vessel_name: `${item.carrier} SEAWAYS`,
+              service_line: item.service,
+              pol_code: `${origInfo.code} - ${origin.toUpperCase()}`,
+              pod_code: `${destInfo.code} - ${destination.toUpperCase()}`,
+              is_recommended: idx === 0
+            };
+          });
+
+        } else if (cargoType.includes('Likit') || cargoType.includes('Liquid')) {
+          // LİKİT & KİMYASAL TANKER (IMO Hazmat / Liquid Bulk)
+          const liquidCarriers = [
+            { carrier: 'STOLT-NIELSEN', tanker_type: 'Paslanmaz Çelik IMO Tanker', rate_per_ton: 55, transit: 5, service: 'Global Chemical Logistics' },
+            { carrier: 'ODFJELL TANKERS', tanker_type: 'Bölmeli Kimyasal Tanker', rate_per_ton: 52, transit: 6, service: 'Euro-Med Liquid Line' }
+          ];
+
+          const liquidTonnage = Number(payload.amount) || 1000;
+          const imoClass = payload.imo_class || 'Genel Likit'; // IMO Class 1-9
+          const imoMultiplier = (imoClass && imoClass.includes('Class 3')) ? 1.25 : ((imoClass && imoClass.includes('Class 6')) ? 1.35 : 1.10);
+
+          autoQuotes = liquidCarriers.map((item, idx) => {
+            const oceanTotal = Math.round(liquidTonnage * item.rate_per_ton * imoMultiplier);
+            const tankCleaningCost = 1500; // Tank yıkama / Gazdan arındırma
+            const profit = Math.round(oceanTotal * 0.14);
+            const totalSell = oceanTotal + tankCleaningCost + profit;
+
+            return {
+              id: 'Q-TANK-' + Math.floor(10000 + Math.random() * 90000),
+              carrier: item.carrier,
+              verified: true,
+              reliability: 97,
+              capacity: 'GUARANTEED',
+              type: 'Likit & Kimyasal Tanker',
+              transit_days: item.transit,
+              price: totalSell,
+              unit_price_per_ton: (item.rate_per_ton * imoMultiplier).toFixed(1),
+              tonnage_amount: liquidTonnage,
+              buy_price: oceanTotal,
+              net_profit: profit,
+              ocean_freight: oceanTotal,
+              thc_cost: tankCleaningCost,
+              isps_cost: 350,
+              free_time_days: 3,
+              cargo_specs: `${item.tanker_type} | Tank Yıkama Dahil | ${imoClass}`,
+              co2_emissions: '0.48 Ton CO2',
+              vessel_name: `${item.carrier} DESTINY`,
+              service_line: item.service,
+              pol_code: `${origInfo.code} - ${origin.toUpperCase()}`,
+              pod_code: `${destInfo.code} - ${destination.toUpperCase()}`,
+              is_recommended: idx === 0
+            };
+          });
+
+        } else {
+          // KONTEYNER (FCL / LCL - 20'DV / 40'HC)
+          const containerCarriers = [
+            { carrier: 'MSC', type: 'Direkt', transit: 3, markup: 15, service: 'Dragon Express Line' },
+            { carrier: 'MAERSK LINE', type: 'Direkt', transit: 3, markup: 16, service: 'AE15 Asia-Euro Express' },
+            { carrier: 'ARKAS LINE', type: 'Bölgesel Direkt', transit: 4, markup: 14, service: 'Levant Feeder Express' },
+            { carrier: 'TURKON LINE', type: 'Ekspres Direkt', transit: 5, markup: 15, service: 'USA Direct Express' },
+            { carrier: 'CMA CGM', type: 'Aktarmalı', transit: 7, markup: 11, service: 'MEX Line' },
+            { carrier: 'MEDKON LINES', type: 'Kabotaj / Feeder', transit: 2, markup: 16, service: 'Karadeniz & Ege Feeder' }
+          ];
+
+          const baseBuy = Math.floor(1550 + Math.random() * 450); // $1550 - $2000 USD
+          autoQuotes = containerCarriers.map((item, idx) => {
+            const buyPrice = baseBuy + (idx * 110);
+            const netProfit = Math.round(buyPrice * (item.markup / 100));
+            const sellPrice = buyPrice + netProfit;
+
+            return {
+              id: 'Q-FCL-' + Math.floor(10000 + Math.random() * 90000),
+              carrier: item.carrier,
+              verified: true,
+              reliability: 96 + (idx % 4),
+              capacity: idx % 2 === 0 ? 'GUARANTEED' : 'AVAILABLE',
+              type: item.type,
+              transit_days: item.transit,
+              price: sellPrice,
+              buy_price: buyPrice,
+              net_profit: netProfit,
+              ocean_freight: Math.round(sellPrice * 0.82),
+              thc_cost: Math.round(sellPrice * 0.12),
+              isps_cost: sellPrice - Math.round(sellPrice * 0.82) - Math.round(sellPrice * 0.12),
+              free_time_days: 14,
+              cargo_specs: '40\' High Cube (HC) Standard Dry Container',
+              co2_emissions: `${(0.48 + (idx * 0.04)).toFixed(2)} Ton CO2 (%18 Yeşil)`,
+              vessel_name: `${item.carrier} GLOBETROTTER`,
+              service_line: item.service,
+              pol_code: `${origInfo.code} - ${origin.toUpperCase()}`,
+              pod_code: `${destInfo.code} - ${destination.toUpperCase()}`,
+              is_recommended: idx === 0
+            };
+          });
+        }
       }
 
       const newReq = {
@@ -353,9 +644,17 @@ const server = http.createServer(async (req, res) => {
         created_at: new Date().toISOString(),
         origin,
         destination,
-        cargo_type: payload.cargo_type || 'Konteyner',
+        cargo_type: cargoType,
         laycan_date: payload.laycan_date || new Date().toISOString().split('T')[0],
         amount: payload.amount || '1',
+        po_number: payload.po_number || ('PO-2026-' + Math.floor(1000 + Math.random() * 9000)),
+        supplier_name: payload.supplier_name || 'Global B2B Supplier Inc.',
+        sku_list: payload.sku_list || [
+          { sku: 'SKU-TEX-991', name: 'Tekstil & Kumaş Ruloları', qty: '500 Palet', value: '$45,000' }
+        ],
+        internal_notes: [
+          { date: new Date().toLocaleDateString('tr-TR'), author: user.name || 'Satın Alma Sorumlusu', text: 'Sipariş oluşturuldu. Tedarikçi yükleme onayını bekliyor.' }
+        ],
         quotes: autoQuotes
       };
 
@@ -369,7 +668,68 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // UPDATE REQUEST PO & NOTES (B2B PO Hub Endpoint)
+  if (req.method === 'PUT' && req.url === '/api/requests/notes') {
+    try {
+      const user = getUserFromToken(req);
+      if(!user) { res.writeHead(401); res.end(); return; }
+
+      const payload = await parseBody(req);
+      const db = readDB();
+      const index = db.requests.findIndex(r => r.id === payload.req_id);
+      if (index > -1) {
+        if (!db.requests[index].internal_notes) db.requests[index].internal_notes = [];
+        db.requests[index].internal_notes.unshift({
+          date: new Date().toLocaleDateString('tr-TR') + ' ' + new Date().toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'}),
+          author: user.name || 'Ekip Üyesi',
+          text: payload.text
+        });
+        if (payload.po_number) db.requests[index].po_number = payload.po_number;
+        writeDB(db);
+        broadcastSSE(db);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(db.requests[index]));
+        return;
+      }
+      res.writeHead(404); res.end();
+    } catch(err) { res.writeHead(400); res.end(); }
+    return;
+  }
+
+  // REZERVASYON ONAYLAMA ENDPOINT'İ (Müşteri → Operasyon Masası)
+  if (req.method === 'POST' && reqUrl === '/api/requests/confirm') {
+    try {
+      const user = getUserFromToken(req);
+      if (!user) { res.writeHead(401); res.end('Unauthorized'); return; }
+
+      const payload = await parseBody(req);
+      const db = readDB();
+      const index = db.requests.findIndex(r => r.id === payload.req_id && (user.role === 'admin' || r.user_id === user.id));
+      if (index === -1) { res.writeHead(404); res.end(JSON.stringify({ error: 'Talep bulunamadı' })); return; }
+
+      db.requests[index].status = 'confirmed';
+      db.requests[index].confirmed_quote_id = payload.confirmed_quote_id || null;
+      db.requests[index].confirmed_total = payload.grand_total || null;
+      db.requests[index].confirmed_extras = payload.extras || [];
+      db.requests[index].confirmed_at = new Date().toISOString();
+      db.requests[index].internal_notes = db.requests[index].internal_notes || [];
+      db.requests[index].internal_notes.unshift({
+        date: new Date().toLocaleDateString('tr-TR') + ' ' + new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+        author: user.name || 'Müşteri',
+        text: `Rezervasyon onaylandı. Toplam tutar: $${(payload.grand_total || 0).toLocaleString('en-US')}. Operasyon onayı bekleniyor.`
+      });
+
+      writeDB(db);
+      broadcastSSE(db);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, request: db.requests[index] }));
+    } catch(err) { res.writeHead(400); res.end(); }
+    return;
+  }
+
   // ADMIN ENDPOINTS (ADD QUOTE, CREATE TRACKING, UPDATE TRACKING)
+
   if (req.method === 'POST' && req.url === '/api/quote') {
     try {
       const user = getUserFromToken(req);
