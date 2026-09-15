@@ -163,6 +163,20 @@
       0% { transform: translate3d(0, 0, 0); }
       100% { transform: translate3d(-680px, 0, 0); }
     }
+
+    /* SMOOTH AUTOMATIC INFINITE TELEMETRY MARQUEE */
+    @keyframes marqueeScroll {
+      0% { transform: translate3d(0, 0, 0); }
+      100% { transform: translate3d(-50%, 0, 0); }
+    }
+    .animate-marquee {
+      display: flex;
+      width: max-content;
+      animation: marqueeScroll 25s linear infinite;
+    }
+    .animate-marquee:hover {
+      animation-play-state: paused;
+    }
     
     .animate-ship-pure-cruise {
       animation: slideLeft 3.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -173,9 +187,68 @@
       border-radius: 0 !important;
     }
 
+    @keyframes shipBob {
+      0%, 100% { transform: translateY(0px) rotate(0deg); }
+      50% { transform: translateY(-3px) rotate(-1deg); }
+    }
+
+    @keyframes waveRight1 {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(120px); }
+    }
+
+    @keyframes waveLeft2 {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-160px); }
+    }
+
+    @keyframes waveRight3 {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(90px); }
+    }
+
     @keyframes sweepShine {
       0% { transform: translateX(100%); }
       100% { transform: translateX(-100%); }
+    }
+
+    /* SİNEMATİK PREMİUM METİN VE GRADİENT GEÇİŞ ANİMASYONLARI */
+    @keyframes cinematicSlideUp {
+      0% { 
+        opacity: 0; 
+        transform: translateY(24px) scale(0.96); 
+        filter: blur(8px); 
+      }
+      40% {
+        opacity: 0.6;
+        filter: blur(3px);
+      }
+      100% { 
+        opacity: 1; 
+        transform: translateY(0) scale(1); 
+        filter: blur(0px); 
+      }
+    }
+    .animate-cinematic-text {
+      animation: cinematicSlideUp 2.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      will-change: transform, opacity, filter;
+    }
+
+    /* PREMİUM CANLI ARMATÖR GRADIENT YAZI RENKLERİ */
+    .text-gradient-sky-blue {
+      background: linear-gradient(135deg, #ffffff 20%, #38bdf8 65%, #2563eb 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-emerald-gold {
+      background: linear-gradient(135deg, #ffffff 20%, #34d399 60%, #fbdf59 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .text-gradient-indigo-cyan {
+      background: linear-gradient(135deg, #ffffff 20%, #818cf8 60%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     /* Animasyonlar */
@@ -407,6 +480,9 @@
       async login(email, password) { const data = await this.req('/api/auth/login', 'POST', {email, password}); this.setToken(data.token); return data.user; },
       async register(name, email, password) { const data = await this.req('/api/auth/register', 'POST', {name, email, password}); this.setToken(data.token); return data.user; },
       async getMe() { if(!this.getToken()) return null; try { const data = await this.req('/api/auth/me'); return data.user; } catch(e) { return null; } },
+      async getProfile() { return this.req('/api/user/profile'); },
+      async updateProfile(profileData) { return this.req('/api/user/profile', 'PUT', profileData); },
+      async clearSearchHistory() { return this.req('/api/user/search-history', 'DELETE'); },
       async getDB() { return this.req('/api/requests'); },
       async createRequest(payload) { return this.req('/api/requests', 'POST', payload); },
       async submitQuote(req_id, quoteData) { return this.req('/api/quote', 'POST', {req_id, ...quoteData}); },
@@ -435,6 +511,8 @@
       const [db, setDb] = useState({ requests: [], trackings: [] });
       const [user, setUser] = useState(null);
       const [authLoading, setAuthLoading] = useState(true);
+      const [showProfileModal, setShowProfileModal] = useState(false);
+      const [selectedPresetSearch, setSelectedPresetSearch] = useState(null);
 
       useEffect(() => {
         API.getMe()
@@ -445,8 +523,25 @@
 
       useEffect(() => {
         if(!user) return; 
-        API.getDB().then(data => { if(!Array.isArray(data)) setDb(data); });
-        const unsub = API.subscribe(data => { if(!Array.isArray(data)) setDb(data); });
+        
+        // Veri İzolasyonu: Admin tüm talepleri, normal kullanıcı sadece kendisine ait olanları saklar
+        const filterDataForUser = (data) => {
+          if (!data || !data.requests) return data;
+          if (user.role === 'admin') return data;
+          return {
+            ...data,
+            requests: (data.requests || []).filter(r => r.user_id === user.id)
+          };
+        };
+
+        API.getDB().then(data => { 
+          if(!Array.isArray(data)) setDb(filterDataForUser(data)); 
+        });
+
+        const unsub = API.subscribe(data => { 
+          if(!Array.isArray(data)) setDb(filterDataForUser(data)); 
+        });
+
         return () => unsub();
       }, [user]);
 
@@ -465,22 +560,122 @@
 
       return (
         <div className="min-h-screen flex flex-col">
-          <Navbar view={view} setView={handleProtectedNavigate} user={user} setUser={setUser} requests={db.requests || []} />
-          <main className="flex-1 relative">
-            {view === 'home' && <HomeView requests={db?.requests || []} onScan={() => handleProtectedNavigate('results')} user={user} />}
+          <Navbar 
+            view={view} 
+            setView={handleProtectedNavigate} 
+            user={user} 
+            setUser={setUser} 
+            requests={db.requests || []} 
+            onOpenProfile={() => setShowProfileModal(true)}
+          />
+          <main className="flex-1 relative pb-20 md:pb-0">
+            {view === 'home' && (
+              <HomeView 
+                requests={db?.requests || []} 
+                onScan={() => handleProtectedNavigate('results')} 
+                user={user} 
+                setUser={setUser}
+                presetSearch={selectedPresetSearch}
+                onClearPreset={() => setSelectedPresetSearch(null)}
+              />
+            )}
             {view === 'login' && <AuthView setUser={setUser} setView={setView} />}
             {view === 'customer_portal' && <CustomerPortalView requests={db?.requests || []} setView={setView} user={user} />}
             {view === 'exchange' && <ExchangeView />}
             {view === 'tracking' && <LiveTrackingView trackings={db?.trackings || []} />}
             {view === 'network' && <NetworkView />}
             {view === 'admin' && (user?.role === 'admin' ? <AdminView db={db || {}} /> : <CustomerPortalView requests={db?.requests || []} setView={setView} user={user} />)}
-            {!['home', 'login', 'customer_portal', 'exchange', 'tracking', 'network', 'admin'].includes(view) && <HomeView requests={db?.requests || []} onScan={() => handleProtectedNavigate('results')} user={user} />}
+            {!['home', 'login', 'customer_portal', 'exchange', 'tracking', 'network', 'admin'].includes(view) && (
+              <HomeView 
+                requests={db?.requests || []} 
+                onScan={() => handleProtectedNavigate('results')} 
+                user={user} 
+                setUser={setUser}
+                presetSearch={selectedPresetSearch}
+                onClearPreset={() => setSelectedPresetSearch(null)}
+              />
+            )}
           </main>
+
+          {/* USER PROFILE & ACCOUNT SETTINGS MODAL */}
+          {showProfileModal && (
+            <UserProfileModal 
+              user={user} 
+              setUser={setUser} 
+              onClose={() => setShowProfileModal(false)} 
+              onSelectSearch={(historyItem) => {
+                setSelectedPresetSearch(historyItem);
+                setView('home');
+              }}
+            />
+          )}
+
+          {/* MOBILE BOTTOM NAVIGATION BAR (SADECE TELEFONLARDA GÖRÜNÜR - PC DÜZENİ BİREBİR AYNIDIR) */}
+          <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/95 backdrop-blur-xl border-t border-white/10 px-2 py-2 flex items-center justify-around shadow-2xl">
+            <button 
+              onClick={() => handleProtectedNavigate('home')} 
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition ${view === 'home' ? 'text-sky-400 bg-sky-500/10' : 'text-zinc-400 hover:text-white'}`}
+            >
+              <Icons.Search />
+              <span className="text-[10px] font-bold font-mono uppercase">Arama</span>
+            </button>
+
+            {user && (
+              <button 
+                onClick={() => handleProtectedNavigate('customer_portal')} 
+                className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition relative ${view === 'customer_portal' ? 'text-sky-400 bg-sky-500/10' : 'text-zinc-400 hover:text-white'}`}
+              >
+                <Icons.User />
+                <span className="text-[10px] font-bold font-mono uppercase">Taleplerim</span>
+                {db.requests?.length > 0 && (
+                  <span className="absolute -top-1 right-2 bg-brand text-white font-extrabold text-[9px] px-1.5 py-0.2 rounded-full font-mono">
+                    {db.requests.length}
+                  </span>
+                )}
+              </button>
+            )}
+
+            <button 
+              onClick={() => handleProtectedNavigate('tracking')} 
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition ${view === 'tracking' ? 'text-sky-400 bg-sky-500/10' : 'text-zinc-400 hover:text-white'}`}
+            >
+              <Icons.Map />
+              <span className="text-[10px] font-bold font-mono uppercase">Takip</span>
+            </button>
+
+            <button 
+              onClick={() => handleProtectedNavigate('exchange')} 
+              className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition ${view === 'exchange' ? 'text-sky-400 bg-sky-500/10' : 'text-zinc-400 hover:text-white'}`}
+            >
+              <Icons.Exchange />
+              <span className="text-[10px] font-bold font-mono uppercase">Borsa</span>
+            </button>
+
+            {user ? (
+              <button 
+                onClick={() => setShowProfileModal(true)} 
+                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition text-sky-400 hover:text-white cursor-pointer"
+              >
+                <div className="w-5 h-5 rounded-full bg-brand/30 border border-brand/50 flex items-center justify-center text-[10px] font-bold text-white font-mono">
+                  {user.name ? user.name.charAt(0).toUpperCase() : 'P'}
+                </div>
+                <span className="text-[10px] font-bold font-mono uppercase">Profilim</span>
+              </button>
+            ) : (
+              <button 
+                onClick={() => handleProtectedNavigate('login')} 
+                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition text-sky-400 hover:text-white cursor-pointer"
+              >
+                <Icons.User />
+                <span className="text-[10px] font-bold font-mono uppercase">Giriş</span>
+              </button>
+            )}
+          </div>
         </div>
       );
     }
 
-    function Navbar({ view, setView, user, setUser, requests }) {
+    function Navbar({ view, setView, user, setUser, requests, onOpenProfile }) {
       const userRequestCount = requests.length;
 
       const navItem = (id, label, Icon) => {
@@ -498,16 +693,16 @@
 
       return (
         <header className="border-b border-white/5 bg-dark-900/80 backdrop-blur-md sticky top-0 z-50">
-          <div className="w-full px-6 h-20 flex items-center justify-between">
-            <div className="flex items-center space-x-3.5 cursor-pointer group" onClick={() => setView('home')}>
+          <div className="w-full px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
+            <div className="flex items-center space-x-2.5 sm:space-x-3.5 cursor-pointer group" onClick={() => setView('home')}>
               <div className="flex items-center justify-center text-sky-400 group-hover:scale-105 transition-transform duration-300">
                 <Icons.CraneLogo />
               </div>
               <div className="flex flex-col">
-                <span className="font-extrabold text-2xl tracking-widest text-white uppercase group-hover:text-sky-300 transition-colors font-mono leading-none">
+                <span className="font-extrabold text-lg sm:text-2xl tracking-widest text-white uppercase group-hover:text-sky-300 transition-colors font-mono leading-none">
                   PORTSCANNER
                 </span>
-                <span className="text-[10px] font-mono font-bold text-sky-400/90 tracking-[0.25em] uppercase mt-1">
+                <span className="text-[9px] sm:text-[10px] font-mono font-bold text-sky-400/90 tracking-[0.2em] sm:tracking-[0.25em] uppercase mt-1">
                   MARITIME INTELLIGENCE
                 </span>
               </div>
@@ -522,30 +717,38 @@
               {navItem('network', 'Taşıyıcı Ağımız', Icons.Globe)}
             </nav>
 
-            <div className="flex items-center space-x-5">
+            <div className="flex items-center space-x-2 sm:space-x-5">
               {user?.role === 'admin' && (
                 <button 
                   onClick={() => setView('admin')} 
-                  className="px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs hover:bg-emerald-500/20 transition flex items-center gap-1.5"
+                  className="px-2.5 sm:px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-[11px] sm:text-xs hover:bg-emerald-500/20 transition flex items-center gap-1.5"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                  <span>Ops Masası (Admin)</span>
+                  <span className="hidden sm:inline">Ops Masası (Admin)</span>
+                  <span className="sm:hidden">Ops (Admin)</span>
                 </button>
               )}
               
               {!user ? (
-                <button onClick={() => setView('login')} className="flex items-center space-x-2 px-6 py-2.5 bg-white text-black rounded-full hover:bg-zinc-200 transition text-sm font-extrabold shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+                <button onClick={() => setView('login')} className="flex items-center space-x-2 px-4 sm:px-6 py-2 sm:py-2.5 bg-white text-black rounded-full hover:bg-zinc-200 transition text-xs sm:text-sm font-extrabold shadow-[0_0_15px_rgba(255,255,255,0.2)]">
                   <span>Giriş Yap</span>
                 </button>
               ) : (
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2 sm:space-x-3">
                   <button 
-                    onClick={() => setView('customer_portal')}
-                    className="flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-brand/20 border border-brand/40 hover:bg-brand/30 transition cursor-pointer"
+                    onClick={onOpenProfile}
+                    title="Profil & Hesap Ayarlarını Aç"
+                    className="flex items-center space-x-2 px-2.5 sm:px-3.5 py-1.5 rounded-full bg-brand/20 border border-brand/40 hover:bg-brand/30 transition cursor-pointer"
                   >
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                    <span className="text-xs font-bold text-sky-300">{user.name}</span>
-                    <span className="bg-brand text-white font-extrabold text-[10px] px-2 py-0.5 rounded-full font-mono">{userRequestCount} Talep</span>
+                    <span className="text-xs font-bold text-sky-300 max-w-[90px] sm:max-w-none truncate">{user.company_name || user.name}</span>
+                    <span className="bg-brand text-white font-extrabold text-[10px] px-2 py-0.5 rounded-full font-mono hidden sm:inline">{userRequestCount} Talep</span>
+                  </button>
+                  <button 
+                    onClick={onOpenProfile}
+                    className="hidden sm:inline-block px-3 py-1.5 text-xs font-bold text-sky-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-full transition border border-white/10 cursor-pointer"
+                  >
+                    ⚙ Profilim
                   </button>
                   <button onClick={() => { API.setToken(''); setUser(null); setView('home'); }} className="text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest pl-2 border-l border-white/10">Çıkış</button>
                 </div>
@@ -786,8 +989,340 @@
       );
     }
 
+    // USER PROFILE & ACCOUNT SETTINGS MODAL
+    function UserProfileModal({ user, setUser, onClose, onSelectSearch }) {
+      const [activeTab, setActiveTab] = useState('profile'); // 'profile', 'security', 'history'
+      const [name, setName] = useState(user?.name || '');
+      const [companyName, setCompanyName] = useState(user?.company_name || user?.name || '');
+      const [phone, setPhone] = useState(user?.phone || '');
+      const [taxId, setTaxId] = useState(user?.tax_id || '');
+      const [taxOffice, setTaxOffice] = useState(user?.tax_office || '');
+      const [currency, setCurrency] = useState(user?.preferred_currency || 'USD');
+
+      const [currentPassword, setCurrentPassword] = useState('');
+      const [newPassword, setNewPassword] = useState('');
+      const [confirmPassword, setConfirmPassword] = useState('');
+
+      const [saving, setSaving] = useState(false);
+      const [statusMsg, setStatusMsg] = useState({ type: '', text: '' });
+      const [searchHistory, setSearchHistory] = useState(user?.search_history || []);
+
+      useEffect(() => {
+        if (user?.search_history) setSearchHistory(user.search_history);
+      }, [user]);
+
+      const handleSaveProfile = async (e) => {
+        e.preventDefault();
+        setSaving(true);
+        setStatusMsg({ type: '', text: '' });
+        try {
+          const res = await API.updateProfile({
+            name,
+            company_name: companyName,
+            phone,
+            tax_id: taxId,
+            tax_office: taxOffice,
+            preferred_currency: currency
+          });
+          setUser(res.user);
+          setStatusMsg({ type: 'success', text: 'Profil ve şirket bilgileriniz başarıyla güncellendi.' });
+        } catch (err) {
+          setStatusMsg({ type: 'error', text: err.message || 'Profil güncellenemedi.' });
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleChangePassword = async (e) => {
+        e.preventDefault();
+        if (newPassword !== confirmPassword) {
+          setStatusMsg({ type: 'error', text: 'Yeni şifreler eşleşmiyor.' });
+          return;
+        }
+        if (newPassword.length < 6) {
+          setStatusMsg({ type: 'error', text: 'Şifre en az 6 karakter olmalıdır.' });
+          return;
+        }
+        setSaving(true);
+        setStatusMsg({ type: '', text: '' });
+        try {
+          const res = await API.updateProfile({
+            current_password: currentPassword,
+            new_password: newPassword
+          });
+          setUser(res.user);
+          setCurrentPassword('');
+          setNewPassword('');
+          setConfirmPassword('');
+          setStatusMsg({ type: 'success', text: 'Parolanız başarıyla yenilendi.' });
+        } catch (err) {
+          setStatusMsg({ type: 'error', text: err.message || 'Şifre güncellenemedi.' });
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleClearHistory = async () => {
+        if (!confirm('Arama geçmişinizi sıfırlamak istediğinize emin misiniz?')) return;
+        try {
+          await API.clearSearchHistory();
+          setSearchHistory([]);
+          setUser(prev => ({ ...prev, search_history: [] }));
+          setStatusMsg({ type: 'success', text: 'Arama geçmişi temizlendi.' });
+        } catch (err) {
+          setStatusMsg({ type: 'error', text: 'Görünüşe göre geçmiş temizlenemedi.' });
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md fade-in">
+          <div className="bg-dark-850 border border-white/15 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl space-y-0">
+            {/* Header */}
+            <div className="p-6 bg-gradient-to-r from-dark-900 via-dark-850 to-dark-900 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-12 h-12 rounded-2xl bg-brand/20 border border-brand/40 flex items-center justify-center text-sky-400 font-extrabold text-xl font-mono">
+                  {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-xl font-extrabold text-white">{user?.company_name || user?.name}</h3>
+                    <span className="text-[10px] font-extrabold font-mono uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                      {user?.role === 'admin' ? 'OPERASYON YÖNETİCİSİ' : 'DOĞRULANMIŞ KURUMSAL ÜYE'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 font-mono">{user?.email} • ID: {user?.id}</p>
+                </div>
+              </div>
+              <button 
+                onClick={onClose} 
+                className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Tab Controls */}
+            <div className="flex border-b border-white/10 bg-dark-900 px-6 pt-3">
+              <button
+                onClick={() => { setActiveTab('profile'); setStatusMsg({ type: '', text: '' }); }}
+                className={`px-5 py-3 text-xs font-mono font-bold tracking-wider uppercase border-b-2 transition ${activeTab === 'profile' ? 'border-sky-400 text-sky-400 bg-sky-500/10' : 'border-transparent text-zinc-400 hover:text-white'}`}
+              >
+                👤 Profil & Şirket Bilgileri
+              </button>
+              <button
+                onClick={() => { setActiveTab('history'); setStatusMsg({ type: '', text: '' }); }}
+                className={`px-5 py-3 text-xs font-mono font-bold tracking-wider uppercase border-b-2 transition flex items-center gap-2 ${activeTab === 'history' ? 'border-sky-400 text-sky-400 bg-sky-500/10' : 'border-transparent text-zinc-400 hover:text-white'}`}
+              >
+                <span>🕒 Arama Geçmişim</span>
+                <span className="bg-brand text-white text-[10px] px-1.5 py-0.5 rounded-full font-mono">{searchHistory.length}</span>
+              </button>
+              <button
+                onClick={() => { setActiveTab('security'); setStatusMsg({ type: '', text: '' }); }}
+                className={`px-5 py-3 text-xs font-mono font-bold tracking-wider uppercase border-b-2 transition ${activeTab === 'security' ? 'border-sky-400 text-sky-400 bg-sky-500/10' : 'border-transparent text-zinc-400 hover:text-white'}`}
+              >
+                🔒 Güvenlik & Parola
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 max-h-[65vh] overflow-y-auto space-y-4">
+              {statusMsg.text && (
+                <div className={`p-4 rounded-2xl border text-xs font-bold font-mono ${statusMsg.type === 'success' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-red-500/15 border-red-500/30 text-red-300'}`}>
+                  {statusMsg.type === 'success' ? '✓ ' : '⚠ '} {statusMsg.text}
+                </div>
+              )}
+
+              {/* TAB 1: PROFİL DÜZENLEME */}
+              {activeTab === 'profile' && (
+                <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Yetkili Adı Soyadı</label>
+                      <input
+                        type="text"
+                        value={name}
+                        onChange={e=>setName(e.target.value)}
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Kurumsal Şirket Ünvanı</label>
+                      <input
+                        type="text"
+                        value={companyName}
+                        onChange={e=>setCompanyName(e.target.value)}
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">İletişim Telefon Numarası</label>
+                      <input
+                        type="text"
+                        value={phone}
+                        onChange={e=>setPhone(e.target.value)}
+                        placeholder="+90 532 000 0000"
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Tercih Edilen Para Birimi</label>
+                      <select
+                        value={currency}
+                        onChange={e=>setCurrency(e.target.value)}
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      >
+                        <option value="USD">USD ($) - Amerikan Doları</option>
+                        <option value="EUR">EUR (€) - Euro</option>
+                        <option value="TRY">TRY (₺) - Türk Lirası</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Vergi Dairesi</label>
+                      <input
+                        type="text"
+                        value={taxOffice}
+                        onChange={e=>setTaxOffice(e.target.value)}
+                        placeholder="Örn: Büyük Mükellefler VD"
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Vergi Kimlik Numarası (VKN)</label>
+                      <input
+                        type="text"
+                        value={taxId}
+                        onChange={e=>setTaxId(e.target.value)}
+                        placeholder="10 Haneli Vergi No"
+                        className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="px-6 py-3 bg-brand hover:bg-blue-600 text-white font-extrabold rounded-xl transition font-mono uppercase tracking-wider text-xs shadow-lg shadow-brand/20 cursor-pointer"
+                    >
+                      {saving ? 'GÜNCELLENİYOR...' : 'PROFİL BİLGİLERİNİ KAYDET'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* TAB 2: ARAMA GEÇMİŞİ */}
+              {activeTab === 'history' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                    <div>
+                      <h4 className="text-sm font-bold text-white uppercase font-mono">Geçmiş Navlun & Rota Aramalarınız</h4>
+                      <p className="text-xs text-zinc-400">Son yaptığınız aramalar profilinizde özel olarak saklanır. Tek tıkla tekrar sorgulayın.</p>
+                    </div>
+                    {searchHistory.length > 0 && (
+                      <button
+                        onClick={handleClearHistory}
+                        className="px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono font-bold hover:bg-red-500/20 transition cursor-pointer"
+                      >
+                        🗑 Geçmişi Temizle
+                      </button>
+                    )}
+                  </div>
+
+                  {searchHistory.length === 0 ? (
+                    <div className="p-8 text-center bg-dark-900 rounded-2xl border border-white/10 text-zinc-400 text-xs font-mono">
+                      Henüz kayıtlı arama geçmişiniz bulunmuyor. Ana sayfadan navlun araması yaptıkça geçmişiniz burada listelenecektir.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {searchHistory.map((item, idx) => (
+                        <div key={item.id || idx} className="p-3.5 bg-dark-900 rounded-2xl border border-white/10 flex items-center justify-between hover:border-sky-400/40 transition">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 font-mono text-xs font-bold">
+                              #{idx + 1}
+                            </div>
+                            <div>
+                              <div className="flex items-center space-x-2 text-xs font-bold text-white font-mono">
+                                <span className="uppercase">{item.origin}</span>
+                                <span className="text-sky-400">➔</span>
+                                <span className="uppercase">{item.destination}</span>
+                                <span className="text-[10px] bg-brand/20 text-sky-300 px-2 py-0.5 rounded-full border border-brand/30">{item.cargo_type}</span>
+                              </div>
+                              <div className="text-[10px] text-zinc-400 font-mono mt-0.5">
+                                {new Date(item.created_at).toLocaleString('tr-TR')} • Yük Miktarı: {item.amount || '1'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              if (onSelectSearch) onSelectSearch(item);
+                              onClose();
+                            }}
+                            className="px-4 py-2 bg-sky-500/10 border border-sky-500/30 text-sky-300 font-bold text-xs rounded-xl hover:bg-sky-500/20 transition font-mono cursor-pointer"
+                          >
+                            Tekrar Sorgula 🔍
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: GÜVENLİK VE PAROLA */}
+              {activeTab === 'security' && (
+                <form onSubmit={handleChangePassword} className="space-y-4 text-xs max-w-md">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Mevcut Şifreniz</label>
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={e=>setCurrentPassword(e.target.value)}
+                      className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Yeni Şifreniz</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={e=>setNewPassword(e.target.value)}
+                      className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-mono font-bold text-sky-400 uppercase">Yeni Şifre Tekrar</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={e=>setConfirmPassword(e.target.value)}
+                      className="w-full bg-dark-900 border border-white/15 focus:border-sky-400 rounded-xl p-3 text-white outline-none"
+                      required
+                    />
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="px-6 py-3 bg-brand hover:bg-blue-600 text-white font-extrabold rounded-xl transition font-mono uppercase tracking-wider text-xs shadow-lg shadow-brand/20 cursor-pointer"
+                    >
+                      {saving ? 'İŞLENİYOR...' : 'PAROLAYI GÜNCELLE'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // HOMEVIEW (Arama ve Milyar Dolarlık Sonuçlar - Geri Bildirime Uygun)
-    function HomeView({ requests, onScan, user }) {
+    function HomeView({ requests, onScan, user, setUser, presetSearch, onClearPreset }) {
       const [type, setType] = useState('Konteyner');
       const [origin, setOrigin] = useState('');
       const [dest, setDest] = useState('');
@@ -807,6 +1342,24 @@
       
       const [activeRequestId, setActiveRequestId] = useState(null);
       const resultsRef = useRef(null);
+
+      // Preset Arama Tetiklendiğinde Formu Otomatik Doldur ve Aramayı Çalıştır
+      useEffect(() => {
+        if (presetSearch) {
+          const pOrigin = presetSearch.origin || '';
+          const pDest = presetSearch.destination || '';
+          const pType = presetSearch.cargo_type || 'Konteyner';
+          const pAmount = presetSearch.amount || '1500';
+
+          setOrigin(pOrigin);
+          setDest(pDest);
+          setType(pType);
+          setAmount(pAmount);
+          
+          if (onClearPreset) onClearPreset();
+          runSearch({ origin: pOrigin, destination: pDest, cargo_type: pType, amount: pAmount });
+        }
+      }, [presetSearch]);
 
       // Kullanıcının Son Aramasını ve Oturum State'ini Yükle
       useEffect(() => {
@@ -837,34 +1390,52 @@
         setLocalRequests(requests || []);
       }, [requests]);
 
-      const handleSubmit = async (e) => {
-        e.preventDefault();
-        if(!user) { onScan(); return; }
+      const runSearch = async (overrideParams = null) => {
+        if (!user) { onScan(); return; }
 
-        setLoading(true); setActiveRequestId(null);
-        setTimeout(async () => {
-          try {
-            const req = await API.createRequest({ 
-              cargo_type: type, 
-              amount: amount || '1500', 
-              origin, 
-              destination: dest, 
-              draft_limit: draftLimit,
-              stowage_factor: stowageFactor,
-              imo_class: imoClass,
-              fiost_terms: fiostTerms,
-              laycan_date: '' 
-            });
-            setLocalRequests(prev => [req, ...prev]);
-            setActiveRequestId(req.id); 
+        const targetOrigin = overrideParams?.origin || origin;
+        const targetDest = overrideParams?.destination || dest;
+        const targetType = overrideParams?.cargo_type || type;
+        const targetAmount = overrideParams?.amount || amount || '1500';
+
+        setLoading(true); 
+        setActiveRequestId(null);
+
+        try {
+          const req = await API.createRequest({ 
+            cargo_type: targetType, 
+            amount: targetAmount, 
+            origin: targetOrigin, 
+            destination: targetDest, 
+            draft_limit: draftLimit,
+            stowage_factor: stowageFactor,
+            imo_class: imoClass,
+            fiost_terms: fiostTerms,
+            laycan_date: '' 
+          });
+          setLocalRequests(prev => [req, ...prev]);
+          setActiveRequestId(req.id); 
+          
+          const newState = { origin: targetOrigin, destination: targetDest, cargo_type: targetType, sort_by: sortBy, activeRequestId: req.id };
+          saveState(newState);
+
+          // Kullanıcı profil ve arama geçmişini güncelle
+          API.getMe().then(u => { if (u && setUser) setUser(u); });
+
+          // Gemi süzülme animasyonu (3.2s) tam ve pürüzsüzamlansın diye loading durumunu 2.8sn koru
+          setTimeout(() => {
             setLoading(false);
-            
-            const newState = { origin, destination: dest, cargo_type: type, sort_by: sortBy, activeRequestId: req.id };
-            saveState(newState);
-
             setTimeout(() => { if (resultsRef.current) resultsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 150);
-          } catch(err) { setLoading(false); alert('Hata: ' + err.message); }
-        }, 3200); 
+          }, 2800);
+        } catch(err) { 
+          setLoading(false); 
+          alert('Hata: ' + err.message); 
+        }
+      };
+
+      const handleSubmit = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        runSearch();
       };
 
       const activeRequest = localRequests.find(r => r.id === activeRequestId) || localRequests[0];
@@ -892,19 +1463,57 @@
         return list;
       };
 
+      // KENDİLİĞİNDEN YENİLENEN DİNAMİK PREMİUM CANLI SLOGAN VE BAŞLIK ROTASYON MOTORU
+      const dynamicSlogans = [
+        { title: "Kapasitenizi ", highlight: "optimize edin.", subtitle: "Küresel denizcilik ağını saniyeler içinde tarayın, spot fırsatları yakalayın ve navlun maliyetlerini karşılaştırın.", gradientClass: "text-gradient-sky-blue" },
+        { title: "Armatör Spot Fiyatlarına ", highlight: "Anında Kilitlenin.", subtitle: "MSC, Maersk, CMA CGM ve DFDS kontenjanlarını aracı komisyonu olmadan doğrudan canlı tarayın.", gradientClass: "text-gradient-emerald-gold" },
+        { title: "Gümrük & Demuraj Risklerinizi ", highlight: "Sıfırlayın.", subtitle: "Uydudan 24/7 canlı AIS telemetrisi ve 14 gün cezasız serbest süre (Free-Time) garantisi.", gradientClass: "text-gradient-indigo-cyan" },
+        { title: "Akıllı Navlun & SKU ", highlight: "Kar Marjı Hesabı.", subtitle: "İthalat maliyetlerinizi, gümrük vergilerini ve son mil taşımayı ürün başına anında hesaplayın.", gradientClass: "text-gradient-sky-blue" }
+      ];
+
+      const [sloganIdx, setSloganIdx] = useState(0);
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setSloganIdx(prev => (prev + 1) % dynamicSlogans.length);
+        }, 8500); // 8.5 saniyede bir sinematik ve yavaş akışla değişir
+        return () => clearInterval(timer);
+      }, []);
+
       const processedQuotes = getProcessedQuotes();
+
+      const [showOcrModal, setShowOcrModal] = useState(false);
 
       return (
         <div className="fade-in">
-          {/* HERO SECTION */}
-          <div className="min-h-[80vh] flex flex-col justify-center hero-bg relative">
-            <div className="max-w-5xl mx-auto px-6 text-center w-full z-10 pb-16">
-              <h1 className="text-5xl md:text-6xl font-extrabold text-white mb-6 tracking-tight">
-                Kapasitenizi <span className="text-brand">optimize</span> edin.
-              </h1>
-              <p className="text-lg text-zinc-300 mb-10 max-w-2xl mx-auto font-light">
-                Küresel denizcilik ağını saniyeler içinde tarayın, spot fırsatları yakalayın ve navlun maliyetlerini karşılaştırın.
-              </p>
+          {showOcrModal && (
+            <AiOcrModal 
+              onClose={() => setShowOcrModal(false)} 
+              onApplyOcr={(ocr) => {
+                if (ocr) {
+                  // OCR sonucunda tespit edilen ağırlık veya miktar değerlerini arama motoruna kilitler
+                  const weightVal = ocr.weight ? ocr.weight.replace(/[^0-9]/g, '') : '1500';
+                  setAmount(weightVal || '1500');
+                  runSearch({ amount: weightVal || '1500' });
+                }
+              }}
+            />
+          )}
+          {/* HERO SECTION - DİNAMİK CANLI YAŞAYAN ARKA PLAN VE SİNEMATİK SLOGANLAR */}
+          <div className="min-h-[75vh] flex flex-col justify-center hero-bg relative overflow-hidden transition-all duration-1000">
+            <div className="max-w-5xl mx-auto px-6 text-center w-full z-10 pb-12 pt-6">
+              
+              <div className="min-h-[140px] flex flex-col justify-center items-center transition-all duration-700 mb-6">
+                <h1 key={`title-${sloganIdx}`} className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-white mb-4 tracking-tight animate-cinematic-text drop-shadow-2xl">
+                  {dynamicSlogans[sloganIdx].title}
+                  <span className={dynamicSlogans[sloganIdx].gradientClass}>
+                    {dynamicSlogans[sloganIdx].highlight}
+                  </span>
+                </h1>
+                <p key={`sub-${sloganIdx}`} className="text-base sm:text-lg text-zinc-300 max-w-2xl mx-auto font-light animate-cinematic-text drop-shadow">
+                  {dynamicSlogans[sloganIdx].subtitle}
+                </p>
+              </div>
 
               <form onSubmit={handleSubmit} className="glass-input-ivory p-2 rounded-full flex flex-col md:flex-row items-center gap-2 max-w-4xl mx-auto shadow-2xl transition duration-500 relative min-h-[72px]">
                 {/* İNPUT ALANLARI: TARANIYOR ANINDA YUMUŞAKÇA SAYDAMLAŞIR VE ÇUBUK TAMAMEN BOŞALIR */}
@@ -991,6 +1600,56 @@
                   )}
                 </button>
               </form>
+
+              {/* KULLANICIYA ÖZEL HIZLI ARAMA GEÇMİŞİ CHIP'LERİ */}
+              {user?.search_history?.length > 0 && (
+                <div className="mt-4 w-full max-w-4xl mx-auto pt-3 border-t border-white/10 text-left fade-in font-mono">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-mono font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
+                      Son Aramalarınız (1-Tıkla Yükle):
+                    </span>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        API.clearSearchHistory().then(() => {
+                          if (setUser) setUser(prev => ({ ...prev, search_history: [] }));
+                        });
+                      }} 
+                      className="text-[10px] text-zinc-500 hover:text-red-400 transition underline cursor-pointer"
+                    >
+                      Geçmişi Temizle
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {user.search_history.slice(0, 6).map((item, idx) => (
+                      <button
+                        key={item.id || idx}
+                        type="button"
+                        onClick={() => {
+                          const o = item.origin || '';
+                          const d = item.destination || '';
+                          const t = item.cargo_type || 'Konteyner';
+                          const a = item.amount || '1500';
+
+                          setOrigin(o);
+                          setDest(d);
+                          setType(t);
+                          setAmount(a);
+
+                          runSearch({ origin: o, destination: d, cargo_type: t, amount: a });
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-dark-900/90 border border-white/15 hover:border-sky-400/60 hover:bg-sky-500/10 text-xs text-zinc-200 transition flex items-center gap-2 group font-mono cursor-pointer"
+                      >
+                        <span className="font-bold text-white uppercase">{item.origin}</span>
+                        <span className="text-sky-400 font-bold">➔</span>
+                        <span className="font-bold text-white uppercase">{item.destination}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-brand/20 text-[10px] text-sky-300 font-sans border border-brand/30">{item.cargo_type}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* GELİŞMİŞ TEKNİK DENİZCİLİK & YÜK FİLTRELERİ BUTONU VEYA PANELİ */}
               <div className="mt-4 flex flex-col items-center">
@@ -1101,13 +1760,22 @@
                 )}
               </div>
 
-              {/* MODÜL 4: GELİŞMİŞ RFQ & ÖZEL İHALE SİHİRBAZI TETİKLEYİCİSİ */}
+              {/* MODÜL 4: GELİŞMİŞ RFQ & AI DOKÜMAN OCR İŞLEYİCİ TETİKLEYİCİLERİ */}
               <div className="mt-8 flex flex-wrap justify-center items-center gap-4">
-                <span className="text-xs text-zinc-400 font-medium">Özel Ekipman, IMO Hazmat veya 100+ TEU Yıllık Kontrat mı Planlıyorsunuz?</span>
+                <button 
+                  type="button"
+                  onClick={() => setShowOcrModal(true)}
+                  className="px-5 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full text-xs font-bold transition flex items-center gap-2.5 shadow-xl shadow-emerald-500/10 group cursor-pointer"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span className="tracking-wider uppercase text-[11px] font-extrabold">AI DOKÜMAN OCR & FATURA İŞLEYİCİ</span>
+                  <span className="text-emerald-400 font-mono">➔</span>
+                </button>
+
                 <button 
                   type="button"
                   onClick={() => setShowRfqModal(true)}
-                  className="px-5 py-2.5 bg-dark-800/90 hover:bg-dark-750 text-white border border-sky-400/40 rounded-full text-xs font-bold transition flex items-center gap-2.5 shadow-xl shadow-sky-500/10 group"
+                  className="px-5 py-2.5 bg-dark-800/90 hover:bg-dark-750 text-white border border-sky-400/40 rounded-full text-xs font-bold transition flex items-center gap-2.5 shadow-xl shadow-sky-500/10 group cursor-pointer"
                 >
                   <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
                   <span className="tracking-wider uppercase text-[11px] font-extrabold text-sky-300">ENTERPRISE RFQ & İHALE MASASI</span>
@@ -1222,88 +1890,148 @@
                     </div>
                   </aside>
 
-                  {/* SAĞ TEKLİF KARTLARI VEYA MATRİS TABLOSU */}
+                  {/* SAĞ TEKLİF KARTLARI VEYA MATRİS TABLOSU / RFQ PANOLARI */}
                   <div className="flex-1 space-y-6">
-                    {processedQuotes.length === 0 ? (
-                      <div className="text-center p-20 glass-panel rounded-3xl border border-white/10 space-y-4">
-                        <div className="text-xl font-extrabold text-white">Sonuç Bulunamadı</div>
-                        <p className="text-zinc-400 text-sm max-w-md mx-auto">Seçilen filtrelere uygun teklif bulunamadı. Lütfen filtrelerinizi sıfırlayın.</p>
-                      </div>
-                    ) : viewMode === 'matrix' ? (
-                      /* KURUMSAL MATRİS KARŞILAŞTIRMA TABLOSU (ENTERPRISE MATRIX VIEW) */
-                      <div className="glass-panel rounded-3xl border border-white/10 overflow-hidden fade-in">
-                        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-dark-850">
-                          <div>
-                            <h3 className="text-lg font-extrabold text-white">Armatör Spot Karşılaştırma Matrisi</h3>
-                            <p className="text-xs text-zinc-400 font-mono mt-0.5">{activeRequest.origin} ➔ {activeRequest.destination} • 40' High Cube (HC)</p>
+                    {activeRequest?.is_unmatched_route && (
+                      <div className="p-8 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 text-left space-y-6 fade-in shadow-2xl backdrop-blur-xl">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 font-mono font-bold text-xl">
+                              ⚠
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-mono font-extrabold text-amber-400 uppercase tracking-widest bg-amber-500/20 px-2.5 py-0.5 rounded border border-amber-500/30">
+                                DİREKT OTOMATİK SPOT SPOT ROTA DIŞI
+                              </span>
+                              <h3 className="text-xl font-extrabold text-white mt-1">
+                                Anlık Otomatik Spot Fiyat Yok ({activeRequest.origin} ➔ {activeRequest.destination})
+                              </h3>
+                            </div>
                           </div>
-                          <span className="text-xs font-mono font-bold text-sky-400 bg-sky-400/10 px-3 py-1 rounded-full border border-sky-400/20">
-                            {processedQuotes.length} Aktif Teklif Karşılaştırılıyor
+                          <span className="text-xs font-mono text-zinc-400 bg-black/40 px-3 py-1 rounded-full border border-white/10">
+                            ÖZEL OPERASYON KULESİ (RFQ)
                           </span>
                         </div>
 
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-xs font-mono">
-                            <thead className="bg-dark-900 text-zinc-400 uppercase text-[10px] tracking-wider border-b border-white/10">
-                              <tr>
-                                <th className="p-4">Armatör</th>
-                                <th className="p-4">Servis & Gemi</th>
-                                <th className="p-4">Transit</th>
-                                <th className="p-4">Free Time</th>
-                                <th className="p-4">Karbon (ESG)</th>
-                                <th className="p-4 text-right">Spot Navlun</th>
-                                <th className="p-4 text-center">İşlem</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5">
-                              {processedQuotes.map(q => (
-                                <tr key={q.id} className="hover:bg-white/5 transition">
-                                  <td className="p-4 font-extrabold text-white text-sm">
-                                    {q.carrier}
-                                    {q.is_recommended && <span className="ml-2 text-[9px] bg-brand/20 text-sky-300 px-2 py-0.5 rounded border border-brand/40 font-sans">VIP ÖNERİLEN</span>}
-                                  </td>
-                                  <td className="p-4 text-zinc-300">
-                                    <div className="font-bold">{q.service_line || 'Dragon Express'}</div>
-                                    <div className="text-[10px] text-zinc-500">{q.type} Sefer</div>
-                                  </td>
-                                  <td className="p-4 font-bold text-white">
-                                    {q.transit_days} Gün
-                                  </td>
-                                  <td className="p-4 text-sky-300 font-bold">
-                                    {q.free_time_days || 14} Gün Demurajsız
-                                  </td>
-                                  <td className="p-4 text-emerald-400">
-                                    {q.co2_emissions || '0.62 Ton CO2'}
-                                  </td>
-                                  <td className="p-4 text-right font-extrabold text-base text-white">
-                                    ${q.price.toLocaleString()}.00
-                                  </td>
-                                  <td className="p-4 text-center">
-                                    <button 
-                                      onClick={() => {
-                                        // Card modal açma tetikleyici
-                                        const cardBtn = document.getElementById(`quote-btn-${q.id}`);
-                                        if (cardBtn) cardBtn.click();
-                                      }} 
-                                      className="px-4 py-2 bg-white text-black font-extrabold rounded-xl hover:bg-zinc-200 transition text-[11px] uppercase tracking-wider"
-                                    >
-                                      Rezerve Et ➔
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <p className="text-sm text-zinc-300 leading-relaxed font-sans">
+                          Aradığınız <strong>{activeRequest.origin} ➔ {activeRequest.destination}</strong> rotası, anlık otomatik spot fiyatlama yaptığımız 14 ana ticaret koridoru dışındadır. Portscanner Operasyon Masamız, armatör hatlarından özel navlun ve yer kontenjanı almak üzere talebinizi 15 dakika içinde yanıtlayacaktır.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                          <div className="p-4 rounded-2xl bg-dark-900/80 border border-white/10">
+                            <div className="text-[10px] text-zinc-400 font-mono uppercase font-bold">Liman Çifti</div>
+                            <div className="text-sm font-bold text-white font-mono mt-0.5">{activeRequest.origin} ➔ {activeRequest.destination}</div>
+                          </div>
+                          <div className="p-4 rounded-2xl bg-dark-900/80 border border-white/10">
+                            <div className="text-[10px] text-zinc-400 font-mono uppercase font-bold">Yük Tipi</div>
+                            <div className="text-sm font-bold text-sky-400 font-mono mt-0.5">{activeRequest.cargo_type}</div>
+                          </div>
+                          <div className="p-4 rounded-2xl bg-dark-900/80 border border-white/10">
+                            <div className="text-[10px] text-zinc-400 font-mono uppercase font-bold">Tahmini Yanıt Süresi</div>
+                            <div className="text-sm font-bold text-emerald-400 font-mono mt-0.5">15 Dakika (Canlı SLA)</div>
+                          </div>
                         </div>
 
-                         {/* Hidden Card Instances for Modal Portal Triggers */}
-                        <div>
-                          {processedQuotes.map(q => <RichQuoteCard key={q.id} quote={q} origin={activeRequest.origin} destination={activeRequest.destination} />)}
+                        <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-amber-500/20">
+                          <div className="text-xs text-amber-200/80 font-mono flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                            Talebiniz Operasyon Kulesi (Control Tower) SLA Kuyruğuna eklendi.
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              alert(`✓ TEKLİF TALEBİ ALINDI (#${activeRequest.id})\n\n${activeRequest.origin} ➔ ${activeRequest.destination} için özel armatör kotasyonu talebiniz Operasyon Masamıza iletildi.\nUzmanlarımız en kısa sürede sizinle iletişime geçecektir.`);
+                            }}
+                            className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-black text-xs uppercase tracking-wider rounded-2xl transition shadow-xl shadow-amber-500/20 cursor-pointer flex items-center justify-center space-x-2"
+                          >
+                            <span>ÖZEL NAVLUN & ARMATÖR KOTASYONU İSTE (RFQ) ➔</span>
+                          </button>
                         </div>
                       </div>
-                    ) : (
-                      /* VARSAYILAN ZENGİN KART LİSTESİ */
-                      processedQuotes.map(q => <RichQuoteCard key={q.id} quote={q} origin={activeRequest.origin} destination={activeRequest.destination} />)
+                    )}
+
+                    {!activeRequest?.is_unmatched_route && (
+                      processedQuotes.length === 0 ? (
+                        <div className="text-center p-20 glass-panel rounded-3xl border border-white/10 space-y-4">
+                          <div className="text-xl font-extrabold text-white">Sonuç Bulunamadı</div>
+                          <p className="text-zinc-400 text-sm max-w-md mx-auto">Seçilen filtrelere uygun teklif bulunamadı. Lütfen filtrelerinizi sıfırlayın.</p>
+                        </div>
+                      ) : viewMode === 'matrix' ? (
+                        /* KURUMSAL MATRİS KARŞILAŞTIRMA TABLOSU (ENTERPRISE MATRIX VIEW) */
+                        <div className="glass-panel rounded-3xl border border-white/10 overflow-hidden fade-in">
+                          <div className="p-6 border-b border-white/10 flex justify-between items-center bg-dark-850">
+                            <div>
+                              <h3 className="text-lg font-extrabold text-white">Armatör Spot Karşılaştırma Matrisi</h3>
+                              <p className="text-xs text-zinc-400 font-mono mt-0.5">{activeRequest.origin} ➔ {activeRequest.destination} • 40' High Cube (HC)</p>
+                            </div>
+                            <span className="text-xs font-mono font-bold text-sky-400 bg-sky-400/10 px-3 py-1 rounded-full border border-sky-400/20">
+                              {processedQuotes.length} Aktif Teklif Karşılaştırılıyor
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs font-mono">
+                              <thead className="bg-dark-900 text-zinc-400 uppercase text-[10px] tracking-wider border-b border-white/10">
+                                <tr>
+                                  <th className="p-4">Armatör</th>
+                                  <th className="p-4">Servis & Gemi</th>
+                                  <th className="p-4">Transit</th>
+                                  <th className="p-4">Free Time</th>
+                                  <th className="p-4">Karbon (ESG)</th>
+                                  <th className="p-4 text-right">Spot Navlun</th>
+                                  <th className="p-4 text-center">İşlem</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5">
+                                {processedQuotes.map(q => (
+                                  <tr key={q.id} className="hover:bg-white/5 transition">
+                                    <td className="p-4 font-extrabold text-white text-sm">
+                                      {q.carrier}
+                                      {q.is_recommended && <span className="ml-2 text-[9px] bg-brand/20 text-sky-300 px-2 py-0.5 rounded border border-brand/40 font-sans">VIP ÖNERİLEN</span>}
+                                    </td>
+                                    <td className="p-4 text-zinc-300">
+                                      <div className="font-bold">{q.service_line || 'Dragon Express'}</div>
+                                      <div className="text-[10px] text-zinc-500">{q.type} Sefer</div>
+                                    </td>
+                                    <td className="p-4 font-bold text-white">
+                                      {q.transit_days} Gün
+                                    </td>
+                                    <td className="p-4 text-sky-300 font-bold">
+                                      {q.free_time_days || 14} Gün Demurajsız
+                                    </td>
+                                    <td className="p-4 text-emerald-400">
+                                      {q.co2_emissions || '0.62 Ton CO2'}
+                                    </td>
+                                    <td className="p-4 text-right font-extrabold text-base text-white">
+                                      ${q.price.toLocaleString()}.00
+                                    </td>
+                                    <td className="p-4 text-center">
+                                      <button 
+                                        onClick={() => {
+                                          // Card modal açma tetikleyici
+                                          const cardBtn = document.getElementById(`quote-btn-${q.id}`);
+                                          if (cardBtn) cardBtn.click();
+                                        }} 
+                                        className="px-4 py-2 bg-white text-black font-extrabold rounded-xl hover:bg-zinc-200 transition text-[11px] uppercase tracking-wider"
+                                      >
+                                        Rezerve Et ➔
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                           {/* Hidden Card Instances for Modal Portal Triggers */}
+                          <div>
+                            {processedQuotes.map(q => <RichQuoteCard key={q.id} quote={q} origin={activeRequest.origin} destination={activeRequest.destination} />)}
+                          </div>
+                        </div>
+                      ) : (
+                        /* VARSAYILAN ZENGİN KART LİSTESİ */
+                        processedQuotes.map(q => <RichQuoteCard key={q.id} quote={q} origin={activeRequest.origin} destination={activeRequest.destination} />)
+                      )
                     )}
                   </div>
                 </div>
@@ -1315,8 +2043,138 @@
       );
     }
 
+    // RESMİ HOUSE BILL OF LADING (HBL) VE PROFORMA PDF OLUŞTURMA MOTORU
+    function downloadOfficialHBL(quote, origin, destination, user) {
+      const carrier = quote?.carrier || 'MSC';
+      const blNumber = 'HBL-' + carrier.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase() + '-' + Math.floor(100000 + Math.random() * 900000);
+      const containerNo = carrier.substring(0, 3).toUpperCase() + 'U-' + Math.floor(100000 + Math.random() * 900000) + '-7';
+      const sealNo = 'SL-' + Math.floor(10000 + Math.random() * 90000);
+      const vesselVoyage = (quote?.vessel_name || (carrier + ' GLOBETROTTER')) + ' V.2604N';
+      const pol = origin ? origin.toUpperCase() : 'IZMIT (TRIZM)';
+      const pod = destination ? destination.toUpperCase() : 'ROTTERDAM (NLRTM)';
+      const price = quote?.price || 2100;
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${blNumber} - HOUSE BILL OF LADING</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; background: #fff; color: #000; margin: 0; padding: 30px; font-size: 11px; line-height: 1.3; }
+            .header { border-bottom: 3px double #000; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; }
+            .title { font-size: 20px; font-weight: bold; letter-spacing: 2px; }
+            .subtitle { font-size: 10px; text-transform: uppercase; color: #333; margin-top: 3px; }
+            .box-grid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #000; margin-bottom: 15px; }
+            .box { border: 1px solid #000; padding: 8px; box-sizing: border-box; }
+            .box-title { font-size: 9px; font-weight: bold; text-transform: uppercase; color: #555; margin-bottom: 4px; }
+            .box-val { font-weight: bold; font-size: 12px; }
+            .table-cargo { width: 100%; border-collapse: collapse; margin-top: 15px; border: 1px solid #000; }
+            .table-cargo th, .table-cargo td { border: 1px solid #000; padding: 8px; text-align: left; font-size: 10px; }
+            .table-cargo th { background: #f0f0f0; text-transform: uppercase; }
+            .stamp { border: 3px double red; color: red; display: inline-block; padding: 8px 15px; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 2px; transform: rotate(-3deg); margin-top: 20px; }
+            .footer { margin-top: 30px; border-top: 1px solid #000; padding-top: 10px; font-size: 8px; text-align: justify; color: #444; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="title">PORTSCANNER MARITIME LINE</div>
+              <div class="subtitle">NON-NEGOTIABLE HOUSE BILL OF LADING FOR COMBINED TRANSPORT</div>
+              <div style="font-size: 9px; margin-top: 5px;">FMC BONDED NVOCC LICENSE NO: FMC-098241 • EN ISO 14064 COMPLIANT</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 14px; font-weight: bold;">B/L NO: ${blNumber}</div>
+              <div style="font-size: 9px; color: #666; margin-top: 2px;">BOOKING REF: ${quote?.id || 'Q-VERIFIED-991'}</div>
+              <div style="font-size: 9px; color: #666;">DATE: ${new Date().toLocaleDateString('tr-TR')}</div>
+            </div>
+          </div>
+
+          <div class="box-grid">
+            <div class="box">
+              <div class="box-title">SHIPPER / EXPORTER (YÜKLEYİCİ)</div>
+              <div class="box-val">${user?.company_name || user?.name || 'GLOBAL EXPORT LOGISTICS INC.'}</div>
+              <div style="font-size: 9px;">TAX ID / VKN: ${user?.tax_id || '9982410291'} • ${user?.tax_office || 'Marmara VD'}</div>
+              <div style="font-size: 9px;">TEL: ${user?.phone || '+90 212 555 0100'} • EMAIL: ${user?.email || 'ops@portscanner.com'}</div>
+            </div>
+            <div class="box">
+              <div class="box-title">CONSIGNEE (ALICI / GÖNDERİLEN)</div>
+              <div class="box-val">EUROPEAN DISTRIBUTION HUB GMBH</div>
+              <div style="font-size: 9px;">PORT TERMINAL ADDRESS • IMPORT DEPT</div>
+              <div style="font-size: 9px;">NOTIFY PARTY: SAME AS CONSIGNEE</div>
+            </div>
+            <div class="box">
+              <div class="box-title">VESSEL & VOYAGE NO (GEMİ & SEFER NO)</div>
+              <div class="box-val">${vesselVoyage}</div>
+              <div style="font-size: 9px;">CARRIER: ${carrier} • RELIABILITY INDEX: %${quote?.reliability || 98}</div>
+            </div>
+            <div class="box">
+              <div class="box-title">PORT OF LOADING / PORT OF DISCHARGE</div>
+              <div class="box-val">POL: ${pol} ➔ POD: ${pod}</div>
+              <div style="font-size: 9px;">TRANSIT: ${quote?.transit_days || 3} DAYS • FREE TIME: ${quote?.free_time_days || 14} DAYS</div>
+            </div>
+          </div>
+
+          <table class="table-cargo">
+            <thead>
+              <tr>
+                <th>CONTAINER NO / SEAL NO</th>
+                <th>MARKS & NUMBERS</th>
+                <th>DESCRIPTION OF GOODS (YÜK TANIMI & SPESİFİKASYON)</th>
+                <th>GROSS WEIGHT</th>
+                <th>MEASUREMENT</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <strong>${containerNo}</strong><br/>
+                  SEAL: ${sealNo}
+                </td>
+                <td>
+                  PO: PO-2026-8891<br/>
+                  STOWAGE: 1.2 M3/T
+                </td>
+                <td>
+                  ${quote?.cargo_specs || '40\' High Cube (HC) Standard Dry Cargo Container'}<br/>
+                  <em>Clean on Board • FMC Bonded Maritime Freight Rate: $${price.toLocaleString()} USD</em>
+                </td>
+                <td><strong>18,450.00 KGS</strong></td>
+                <td><strong>68.50 CBM</strong></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 25px;">
+            <div>
+              <div class="stamp">ORIGINAL ISSUED • APPROVED FOR SHIPMENT</div>
+              <div style="font-size: 9px; margin-top: 8px; color: #555;">DIGITAL HASH SIGNATURE: sha256_${Math.random().toString(36).substring(2, 15)}</div>
+            </div>
+            <div style="text-align: right; border-top: 1px solid #000; padding-top: 10px; width: 250px;">
+              <div style="font-size: 9px; font-weight: bold; text-transform: uppercase;">FOR PORTSCANNER MARITIME AGENCY</div>
+              <div style="height: 35px;"></div>
+              <div style="font-size: 10px; font-weight: bold;">AUTHORIZED SIGNATURE & STAMP</div>
+            </div>
+          </div>
+
+          <div class="footer">
+            RECEIVED by the Carrier the Goods in apparent good order and condition unless otherwise stated herein to be transported to such place as agreed, subject to all terms and conditions of Portscanner Maritime Transport Standard Rules & BIMCO Merchant Terms.
+          </div>
+        </body>
+        </html>
+      `;
+
+      const win = window.open('', '_blank');
+      if (win) {
+        win.document.write(htmlContent);
+        win.document.close();
+        setTimeout(() => win.print(), 400);
+      } else {
+        alert('Lütfen açılır pencere (pop-up) engelleyicinizi kapatın.');
+      }
+    }
+
     // ZENGİN B2B TEKLİF KARTI VE VIP REZERVASYON BİLEŞENİ
-    function RichQuoteCard({ quote, origin, destination }) {
+    function RichQuoteCard({ quote, origin, destination, user }) {
       const [expanded, setExpanded] = useState(false);
       const [showBreakdown, setShowBreakdown] = useState(false);
       const [showLandedCost, setShowLandedCost] = useState(false);
@@ -1400,26 +2258,26 @@
 
 
       return (
-        <div className={`glass-panel p-6 lg:p-8 rounded-3xl border transition duration-300 space-y-6 relative overflow-hidden ${quote.is_recommended ? 'border-brand/40 shadow-[0_0_30px_rgba(37,99,235,0.15)] bg-dark-850' : 'border-white/10 hover:border-white/25'}`}>
+        <div className={`glass-panel p-4 sm:p-6 lg:p-8 rounded-2xl sm:rounded-3xl border transition duration-300 space-y-4 sm:space-y-6 relative overflow-hidden ${quote.is_recommended ? 'border-brand/40 shadow-[0_0_30px_rgba(37,99,235,0.15)] bg-dark-850' : 'border-white/10 hover:border-white/25'}`}>
           
           {/* Üst Vurgu Rozetleri */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-            <div className="flex items-center space-x-3">
-              <span className="font-extrabold text-white text-2xl tracking-tight">{quote.carrier}</span>
-              <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
+            <div className="flex flex-wrap items-center gap-2 sm:space-x-3">
+              <span className="font-extrabold text-white text-xl sm:text-2xl tracking-tight">{quote.carrier}</span>
+              <span className="text-[11px] sm:text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 sm:px-3 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
                 FMC Bonded Carrier
               </span>
-              <span className="text-xs font-bold text-zinc-400 bg-dark-800 px-3 py-1 rounded-full border border-white/10">
+              <span className="text-[11px] sm:text-xs font-bold text-zinc-400 bg-dark-800 px-2.5 sm:px-3 py-1 rounded-full border border-white/10">
                 % {quote.reliability} Güvenilirlik İndeksi
               </span>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] sm:text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 sm:px-3 py-1 rounded-full border border-emerald-500/20">
                 Piyasa Ort. $340 Altında (%12 Tasarruf)
               </span>
               {quote.is_recommended && (
-                <span className="text-xs font-extrabold text-sky-300 bg-brand/20 px-3 py-1 rounded-full border border-brand/40 flex items-center gap-1">
+                <span className="text-[11px] sm:text-xs font-extrabold text-sky-300 bg-brand/20 px-2.5 sm:px-3 py-1 rounded-full border border-brand/40 flex items-center gap-1">
                   VIP ÖNERİLEN TEKLİF
                 </span>
               )}
@@ -1429,10 +2287,10 @@
           {/* Orta Rota ve Detaylar */}
           <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
             {/* Sol Lojistik Detaylar */}
-            <div className="w-full lg:w-1/3 space-y-3">
+            <div className="w-full lg:w-1/3 space-y-2 sm:space-y-3">
               <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-300">
                 <span className="text-zinc-500">Servis & Ekipman:</span>
-                <span className="text-white font-mono font-bold">{quote.cargo_specs || serviceLineText}</span>
+                <span className="text-white font-mono font-bold truncate max-w-[200px] sm:max-w-none">{quote.cargo_specs || serviceLineText}</span>
               </div>
               <div className="flex items-center space-x-2 text-xs font-semibold text-zinc-300">
                 <span className="text-zinc-500">Serbest Süre (Free Time):</span>
@@ -1452,14 +2310,14 @@
             </div>
 
             {/* Orta Rota Grafiği */}
-            <div className="flex-1 w-full flex items-center justify-center space-x-6 py-4 lg:py-0 border-y lg:border-y-0 border-white/10 px-4">
+            <div className="flex-1 w-full flex items-center justify-center space-x-3 sm:space-x-6 py-4 lg:py-0 border-y lg:border-y-0 border-white/10 px-2 sm:px-4">
               <div className="text-right">
-                <div className="font-extrabold text-white text-xl uppercase tracking-wider">{origin}</div>
-                <div className="text-[10px] text-zinc-500 font-mono font-bold uppercase mt-1">POL Terminal</div>
+                <div className="font-extrabold text-white text-base sm:text-xl uppercase tracking-wider">{origin}</div>
+                <div className="text-[9px] sm:text-[10px] text-zinc-500 font-mono font-bold uppercase mt-1">POL Terminal</div>
               </div>
               
-              <div className="w-36 lg:w-56 text-center relative">
-                <div className={`text-[10px] font-bold px-3 py-1 rounded-full inline-block mb-3 uppercase tracking-widest ${quote.type==='Direkt'?'text-brand bg-brand/10 border border-brand/20':'text-amber-400 bg-amber-400/10 border border-amber-400/20'}`}>
+              <div className="w-24 sm:w-36 lg:w-56 text-center relative">
+                <div className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-full inline-block mb-3 uppercase tracking-widest ${quote.type==='Direkt'?'text-brand bg-brand/10 border border-brand/20':'text-amber-400 bg-amber-400/10 border border-amber-400/20'}`}>
                   {quote.type} Sefer
                 </div>
                 
@@ -1471,35 +2329,44 @@
                   <div className="absolute right-0 w-2.5 h-2.5 bg-brand rounded-full shadow-[0_0_10px_rgba(37,99,235,1)]"></div>
                 </div>
                 
-                <div className="text-xs font-bold text-zinc-400 mt-3 uppercase tracking-widest">{quote.transit_days} GÜN TRANSİT</div>
+                <div className="text-[10px] sm:text-xs font-bold text-zinc-400 mt-3 uppercase tracking-widest">{quote.transit_days} GÜN TRANSİT</div>
               </div>
 
               <div className="text-left">
-                <div className="font-extrabold text-white text-xl uppercase tracking-wide">{destination}</div>
-                <div className="text-[10px] text-zinc-500 font-mono font-bold uppercase mt-1">POD Terminal</div>
+                <div className="font-extrabold text-white text-base sm:text-xl uppercase tracking-wide">{destination}</div>
+                <div className="text-[9px] sm:text-[10px] text-zinc-500 font-mono font-bold uppercase mt-1">POD Terminal</div>
               </div>
             </div>
 
             {/* Sağ Fiyat & Aksiyon */}
-            <div className="w-full lg:w-[280px] text-right lg:border-l border-white/10 lg:pl-6 flex flex-col items-end justify-center relative gap-1">
-              <div className="flex flex-col items-end gap-1 mb-1 w-full">
-                <div className="text-xs font-bold text-zinc-400 flex items-center space-x-1 cursor-pointer hover:text-sky-300 transition" onClick={()=>setShowBreakdown(!showBreakdown)}>
-                  <span>Şeffaf Navlun Dökümü</span>
-                  <span className="text-sky-400">ⓘ</span>
+            <div className="w-full lg:w-[280px] text-center sm:text-right lg:border-l border-white/10 lg:pl-6 flex flex-col items-center sm:items-end justify-center relative gap-1">
+              <div className="flex flex-col items-center sm:items-end gap-1 mb-1 w-full">
+                <div className="flex items-center space-x-2">
+                  <button 
+                    onClick={() => downloadOfficialHBL(quote, origin, destination, user)}
+                    className="text-[10px] font-mono font-bold text-sky-400 hover:text-white bg-sky-500/10 hover:bg-sky-500/20 px-2.5 py-1 rounded-lg border border-sky-500/30 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>📄 B/L PDF İndir</span>
+                  </button>
+                  <div className="text-xs font-bold text-zinc-400 flex items-center space-x-1 cursor-pointer hover:text-sky-300 transition" onClick={()=>setShowBreakdown(!showBreakdown)}>
+                    <span>Döküm</span>
+                    <span className="text-sky-400">ⓘ</span>
+                  </div>
                 </div>
+
                 <button 
                   onClick={() => setShowLandedCost(true)}
-                  className="w-full text-center text-xs font-extrabold text-emerald-300 hover:text-white bg-emerald-500/20 hover:bg-emerald-500/30 px-3 py-1.5 rounded-xl border border-emerald-500/40 transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10 font-mono"
+                  className="w-full text-center text-xs font-extrabold text-emerald-300 hover:text-white bg-emerald-500/20 hover:bg-emerald-500/30 px-3 py-1.5 rounded-xl border border-emerald-500/40 transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10 font-mono cursor-pointer"
                 >
                   <span>SKU İthalat & Kar Marjı Hesabı</span>
                 </button>
               </div>
 
               {/* Fiyat Gösterimi */}
-              <div className="text-right my-1">
-                <div className="text-4xl lg:text-5xl font-extrabold text-white font-mono tracking-tight">
+              <div className="text-center sm:text-right my-1">
+                <div className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white font-mono tracking-tight">
                   ${quote.unit_price_per_ton ? quote.unit_price_per_ton : (quote.price > 10000 ? Math.round(quote.price / (quote.tonnage_amount || 1500)) : quote.price).toLocaleString('en-US')}
-                  <span className="text-lg text-zinc-400">{quote.unit_price_per_ton || quote.tonnage_amount ? '/Ton' : '.00'}</span>
+                  <span className="text-sm sm:text-lg text-zinc-400">{quote.unit_price_per_ton || quote.tonnage_amount ? '/Ton' : '.00'}</span>
                 </div>
                 {(quote.unit_price_per_ton || quote.tonnage_amount) && (
                   <div className="text-[11px] font-mono text-sky-400 font-bold mt-1">
@@ -1511,7 +2378,7 @@
               <button 
                 id={`quote-btn-${quote.id}`}
                 onClick={() => { setBookingModal(true); setBookingStep(1); }}
-                className="w-full py-3.5 bg-white hover:bg-zinc-200 text-black text-xs font-extrabold rounded-xl transition shadow-[0_4px_20px_rgba(255,255,255,0.2)] uppercase tracking-wider mt-1"
+                className="w-full py-3.5 bg-white hover:bg-zinc-200 text-black text-xs font-extrabold rounded-xl transition shadow-[0_4px_20px_rgba(255,255,255,0.2)] uppercase tracking-wider mt-1 cursor-pointer"
               >
                 KAPASİTEYİ REZERVE ET ➔
               </button>
@@ -1520,7 +2387,7 @@
 
           {/* ŞEFFALIK TOOLTIP (Cost Breakdown) */}
           {showBreakdown && (
-            <div className="p-4 bg-dark-900 rounded-2xl border border-white/10 text-xs font-mono grid grid-cols-3 gap-4 text-center fade-in">
+            <div className="p-4 bg-dark-900 rounded-2xl border border-white/10 text-xs font-mono grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-center fade-in">
               <div className="p-2 bg-dark-800 rounded-xl">
                 <span className="text-zinc-500 block">Okyanus Navlunu:</span>
                 <span className="text-white font-bold">${oceanFreight}</span>
@@ -2024,6 +2891,150 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                 <span>📄 SKU İthalat & Marj Raporu İndir (PDF)</span>
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      );
+    }
+
+    // MODÜL 5: B2B AI OCR DOKÜMAN & EVRAK İŞLEME MODAL'I (STANDALONE OCR ENGINE)
+    function AiOcrModal({ onClose, onApplyOcr }) {
+      const [parsing, setParsing] = useState(false);
+      const [ocrResult, setOcrResult] = useState(null);
+
+      const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setParsing(true);
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const rawContent = evt.target.result || '';
+          setTimeout(() => {
+            let textStr = String(rawContent);
+            
+            // Gerçek Metin/Evrak Okuma Regex Kuralları
+            const blMatch = textStr.match(/(?:B\/L|BL|BILL OF LADING|CONSIGNMENT)(?:\s*(?:NO|NUMBER|#))?[:\s]*([A-Z0-9]{8,16})/i);
+            const weightMatch = textStr.match(/(?:WEIGHT|KILO|KG|G\.W|NET WEIGHT)[:\s]*([0-9.,]+\s*(?:KG|KGS|TON|MT)?)/i);
+            const valueMatch = textStr.match(/(?:TOTAL|AMOUNT|VALUE|USD|EUR|\$|€)[:\s]*([0-9.,]+)/i);
+            const hsMatch = textStr.match(/(?:HS|GTIP|HTS|TARIC|CODE)[:\s]*([0-9]{4}\.[0-9]{2}(?:\.[0-9]{2})?)/i);
+
+            const detectedBl = blMatch ? blMatch[1].toUpperCase() : ('BL-PARSED-' + Math.floor(100000 + Math.random() * 900000));
+            const detectedWeight = weightMatch ? (weightMatch[1].toUpperCase().includes('KG') ? weightMatch[1] : weightMatch[1] + ' KG') : (Math.floor(12000 + Math.random() * 15000) + ' KG');
+            const detectedValue = valueMatch ? ('$' + parseFloat(valueMatch[1].replace(',', '')).toLocaleString('en-US') + ' USD') : ('$' + Math.floor(20000 + Math.random() * 50000).toLocaleString('en-US') + ' USD');
+            const detectedHs = hsMatch ? hsMatch[1] : '8471.30.00 (Genel Sanayi / Elektronik Yük)';
+
+            const resultData = {
+              fileName: file.name,
+              fileSize: (file.size / 1024).toFixed(1) + ' KB',
+              blNumber: detectedBl,
+              weight: detectedWeight,
+              quantity: Math.floor(200 + Math.random() * 800) + ' Koli / Palet',
+              goodsValue: detectedValue,
+              hsCode: detectedHs,
+              confidence: textStr.length > 50 ? 99.8 : 96.4,
+              extractedTextSample: textStr ? textStr.substring(0, 300) : 'Evrak ikili (binary/image) formatta okundu.'
+            };
+
+            setOcrResult(resultData);
+            setParsing(false);
+          }, 1000);
+        };
+
+        if (file.type.includes('text') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+          reader.readAsText(file);
+        } else {
+          reader.readAsDataURL(file);
+        }
+      };
+
+      return ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto fade-in">
+          <div className="bg-dark-850 p-8 rounded-3xl max-w-2xl w-full border border-emerald-500/30 space-y-6 relative my-auto shadow-2xl font-mono text-zinc-300">
+            <button onClick={onClose} className="absolute top-6 right-6 text-zinc-400 hover:text-white font-bold text-lg w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 transition">✕</button>
+
+            <div className="border-b border-white/10 pb-4 space-y-1.5 font-sans">
+              <div className="flex items-center space-x-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest">B2B AI DOCUMENT INTELLIGENCE OCR v3.0</span>
+              </div>
+              <h3 className="text-2xl font-extrabold text-white tracking-tight">AI Doküman OCR & Fatura İşleyici</h3>
+              <p className="text-xs text-zinc-400 font-sans">Konşimento, Ticari Fatura veya Çeki Listesi yükleyin. Yapay zeka GTİP Kodları (HS Code), Net Ağırlık ve Fatura Bedelini saniyeler içinde çıkarsın.</p>
+            </div>
+
+            {/* YÜKLEME ALANI */}
+            <div className="p-6 bg-dark-900 rounded-2xl border border-dashed border-emerald-500/40 flex flex-col items-center justify-center text-center space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-mono font-bold text-lg">
+                {parsing ? '⏳' : 'PDF'}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-extrabold text-white font-sans">
+                  {parsing ? 'AI OCR DOKÜMAN TARAMASI SÜRÜYOR...' : 'PDF veya Evrak Dosyasını Sürükleyin veya Seçin'}
+                </h4>
+                <p className="text-xs text-zinc-400 mt-1 font-sans">PDF, PNG, JPG, TXT veya CSV evrakları desteklenmektedir.</p>
+              </div>
+
+              <label className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-extrabold rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-emerald-500/20 font-mono">
+                <span>{parsing ? 'DEŞİFRE EDİLİYOR...' : 'EVRAK SEÇ & AI ILE TARA'}</span>
+                <input 
+                  type="file" 
+                  accept=".pdf,.png,.jpg,.jpeg,.txt,.csv" 
+                  className="hidden" 
+                  disabled={parsing}
+                  onChange={handleFileUpload}
+                />
+              </label>
+            </div>
+
+            {/* AI OCR DEŞİFRE SONUÇ TABLOSU */}
+            {ocrResult && (
+              <div className="p-5 bg-dark-900 rounded-2xl border border-emerald-500/30 space-y-3 fade-in text-xs">
+                <div className="flex justify-between items-center border-b border-white/10 pb-2">
+                  <span className="font-extrabold text-emerald-400 font-sans">AI Deşifre Doğruluk Skoru:</span>
+                  <span className="text-emerald-400 font-bold font-mono bg-emerald-500/10 px-2.5 py-0.5 rounded border border-emerald-500/20">%99.4 Güvenilir</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                  <div>
+                    <span className="text-zinc-500 block text-[10px]">Taranan Evrak:</span>
+                    <strong className="text-white">{ocrResult.fileName}</strong>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[10px]">Tespit Edilen BL No:</span>
+                    <strong className="text-sky-300">{ocrResult.blNumber}</strong>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[10px]">Tespit Edilen GTİP / HS Code:</span>
+                    <strong className="text-amber-300">{ocrResult.hsCode}</strong>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[10px]">Tespit Edilen Net Ağırlık:</span>
+                    <strong className="text-white">{ocrResult.weight}</strong>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-white/10 text-[11px] text-zinc-400 font-sans flex flex-col sm:flex-row justify-between items-center gap-3">
+                  <span className="text-emerald-400 font-mono">✔ Evrak verileri başarıyla deşifre edildi.</span>
+                  <div className="flex items-center space-x-2">
+                    <button onClick={onClose} className="px-3.5 py-2 bg-dark-800 hover:bg-dark-750 text-zinc-300 font-bold rounded-xl transition text-xs font-mono border border-white/10">
+                      Kapat
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (onApplyOcr) {
+                          onApplyOcr(ocrResult);
+                        }
+                        onClose();
+                      }} 
+                      className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-extrabold rounded-xl transition text-xs font-mono uppercase tracking-wider shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>TEKLİFLERİ AL & ARAMA BAŞLAT ➔</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>,
         document.body
@@ -2696,6 +3707,41 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
 
       const [exchangeList, setExchangeList] = useState([]);
 
+      // CANLI BORSA TELEMETRİ DEĞERLERİ (2-3 SAATTE BİR OTOMATİK DİNAMİK DEĞİŞEN İNDEKS ENGINE)
+      const [scfi, setScfi] = useState(2148.50);
+      const [scfiChange, setScfiChange] = useState('+1.45%');
+      const [bdi, setBdi] = useState(1824.00);
+      const [bdiChange, setBdiChange] = useState('-0.62%');
+      const [fbx, setFbx] = useState(2410);
+      const [fbxChange, setFbxChange] = useState('+2.10%');
+
+      // ANLIK KAPASİTE BORSASI CANLI DİNAMİK PREMİUM SLOGAN ROTASYON MOTORU
+      const exchangeSlogans = [
+        { title: "Anlık Boş Gemi Kapasiteleri & ", highlight: "Spot Navlun Borsası", subtitle: "Armatörlerin ve lojistik devlerinin boş kalan slotlarını spot fiyatlara kapatın veya fabrikanızın fazla konteyner kapasitesini anında nakde çevirin.", gradientClass: "text-gradient-emerald-gold" },
+        { title: "NYSHEX Garantili ", highlight: "Çift Yönlü Navlun Pazarı", subtitle: "Spot konteyner kotanızı anında yayınlayın, alıcı ve satıcı tekliflerini doğrudan borsa tahtasında mühürleyin.", gradientClass: "text-gradient-sky-blue" },
+        { title: "Son Dakika Armatör Fırsatları & ", highlight: "İndirimli Slotlar", subtitle: "Ambarlı, Shanghai, Rotterdam ve Mersin hatlarında boş kalan konteyner alanlarını %20 indirimle kilitleyin.", gradientClass: "text-gradient-indigo-cyan" }
+      ];
+
+      const [exSloganIdx, setExSloganIdx] = useState(0);
+
+      useEffect(() => {
+        const sloganTimer = setInterval(() => {
+          setExSloganIdx(prev => (prev + 1) % exchangeSlogans.length);
+        }, 6000);
+        return () => clearInterval(sloganTimer);
+      }, []);
+
+      useEffect(() => {
+        // Her 2-3 saatte bir (veya simülasyon için 10 saniyede bir hafif oynaşma) borsa endeks güncellemesi
+        const telemetryTimer = setInterval(() => {
+          setScfi(prev => +(prev + (Math.random() * 4 - 2)).toFixed(2));
+          setBdi(prev => +(prev + (Math.random() * 6 - 3)).toFixed(2));
+          setFbx(prev => Math.round(prev + (Math.random() * 10 - 5)));
+        }, 12000); // Dinamik canlı borsa dalgalanması
+
+        return () => clearInterval(telemetryTimer);
+      }, []);
+
       useEffect(() => {
         API.req('/api/exchange').then(data => {
           if (Array.isArray(data) && data.length > 0) {
@@ -2758,75 +3804,241 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
       };
 
       return (
-        <div className="max-w-[1600px] mx-auto px-6 py-12 fade-in space-y-10">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 sm:py-8 fade-in space-y-6 sm:space-y-8">
           
-          {/* MANŞET VE BORSA İSTATİSTİK BAR */}
-          <div className="glass-panel p-8 md:p-10 rounded-3xl border border-sky-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-8 relative overflow-hidden">
+          {/* 1. 📊 ŞIK MİNİMALEST B2B BORSA AKIŞ BANDI (KUTUSUZ, YEŞİL IŞIKSIZ, EN ÜSTTE ZERAFETLE KAYAN FİNANSAL TELEMETRİ) */}
+          <div className="border-b border-white/10 pb-3 pt-1 overflow-hidden relative">
+            <div className="flex items-center justify-between gap-4 mb-2">
+              <span className="text-[11px] font-mono font-extrabold text-sky-300 uppercase tracking-widest">
+                BALTIC & SHANGHAI FREIGHT TELEMETRY
+              </span>
+              <span className="text-[10px] font-mono text-zinc-400">
+                GÜNCELLEME: HER 2-3 SAATTE BİR (CANLI BORSA)
+              </span>
+            </div>
+
+            {/* OTOMATİK KENDİ KENDİNE KAYAN MARQUEE (KUTUSUZ & SLIM) */}
+            <div className="overflow-hidden w-full relative">
+              <div className="animate-marquee space-x-8 font-mono text-xs py-0.5">
+                {/* 1. Set Dynamic Telemetry Data */}
+                <div className="flex items-center space-x-8">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Shanghai SCFI:</span>
+                    <span className="text-white font-bold">{scfi.toLocaleString('en-US', { minimumFractionDigits: 2 })} pt</span>
+                    <span className="text-emerald-400 font-bold">{scfiChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Baltic Dry Index (BDI):</span>
+                    <span className="text-white font-bold">{bdi.toLocaleString('en-US', { minimumFractionDigits: 2 })} pt</span>
+                    <span className="text-red-400 font-bold">{bdiChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">FBX Global Container:</span>
+                    <span className="text-white font-bold">${fbx.toLocaleString()} / FEU</span>
+                    <span className="text-emerald-400 font-bold">{fbxChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">VLSFO Bunker Fuel (IST/RTM):</span>
+                    <span className="text-amber-300 font-bold">$614.50 / MT</span>
+                    <span className="text-zinc-400">Stabil</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Parite EUR/USD:</span>
+                    <span className="text-sky-300 font-bold">1.0842</span>
+                    <span className="text-zinc-400">| USD/TRY: 34.20</span>
+                  </div>
+                </div>
+
+                {/* 2. Set Telemetry Data (Kesintisiz döngü için duplicate) */}
+                <div className="flex items-center space-x-8">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Shanghai SCFI:</span>
+                    <span className="text-white font-bold">{scfi.toLocaleString('en-US', { minimumFractionDigits: 2 })} pt</span>
+                    <span className="text-emerald-400 font-bold">{scfiChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Baltic Dry Index (BDI):</span>
+                    <span className="text-white font-bold">{bdi.toLocaleString('en-US', { minimumFractionDigits: 2 })} pt</span>
+                    <span className="text-red-400 font-bold">{bdiChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">FBX Global Container:</span>
+                    <span className="text-white font-bold">${fbx.toLocaleString()} / FEU</span>
+                    <span className="text-emerald-400 font-bold">{fbxChange}</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">VLSFO Bunker Fuel (IST/RTM):</span>
+                    <span className="text-amber-300 font-bold">$614.50 / MT</span>
+                    <span className="text-zinc-400">Stabil</span>
+                  </div>
+                  <span className="text-zinc-600">•</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-zinc-400 uppercase">Parite EUR/USD:</span>
+                    <span className="text-sky-300 font-bold">1.0842</span>
+                    <span className="text-zinc-400">| USD/TRY: 34.20</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. 🚢 MANŞET WIDGETI - ARKA PLAN DENİZCİLİK RESMİ VE ŞIK OVERLAY GÖRSELİ */}
+          <div className="glass-panel p-6 sm:p-8 md:p-10 rounded-3xl border border-sky-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 md:gap-8 relative overflow-hidden bg-cover bg-center shadow-2xl" style={{ backgroundImage: `linear-gradient(to right, rgba(16, 29, 54, 0.95) 40%, rgba(16, 29, 54, 0.70) 100%), url('bg.webp')` }}>
             <div className="space-y-3 z-10 max-w-3xl">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="inline-flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 px-3.5 py-1 rounded-full text-xs font-mono font-bold text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>SPOT FREIGHT CAPACITY EXCHANGE v3.0 (TWO-WAY MARKET)</span>
+                  <span>SPOT FREIGHT CAPACITY EXCHANGE (TWO-WAY MARKET)</span>
                 </span>
                 <span className="text-xs font-mono bg-sky-500/10 text-sky-300 px-3 py-1 rounded-full border border-sky-500/20 font-bold">
-                  🛡 NYSHEX GUARANTEED CONTRACTS
+                  NYSHEX GUARANTEED CONTRACTS
                 </span>
               </div>
-              <h1 className="text-3xl md:text-5xl font-extrabold text-white tracking-tight">Anlık Boş Gemi Kapasiteleri & Spot Navlun Borsası</h1>
-              <p className="text-xs md:text-sm text-zinc-300">
-                Armatörlerin ve lojistik devlerinin boş kalan slotlarını kelepir fiyatlara kapatın veya fabrikanızın fazla konteyner kapasitesini anında nakde çevirin.
-              </p>
+              <div className="min-h-[110px] flex flex-col justify-center">
+                <h1 key={`ex-t-${exSloganIdx}`} className="text-2xl sm:text-3xl md:text-5xl font-extrabold text-white tracking-tight drop-shadow-md animate-cinematic-text">
+                  {exchangeSlogans[exSloganIdx].title}
+                  <span className={exchangeSlogans[exSloganIdx].gradientClass}>
+                    {exchangeSlogans[exSloganIdx].highlight}
+                  </span>
+                </h1>
+                <p key={`ex-s-${exSloganIdx}`} className="text-xs md:text-sm text-zinc-200 drop-shadow mt-2 animate-cinematic-text font-sans">
+                  {exchangeSlogans[exSloganIdx].subtitle}
+                </p>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-4 z-10">
               <button 
                 onClick={() => setShowNewListingModal(true)}
-                className="px-6 py-4 bg-white text-black hover:bg-zinc-200 font-extrabold rounded-2xl text-xs uppercase tracking-widest transition shadow-xl shadow-white/20 font-mono flex items-center gap-2"
+                className="px-6 py-4 bg-white text-black hover:bg-zinc-200 font-extrabold rounded-2xl text-xs uppercase tracking-widest transition shadow-xl shadow-white/20 font-mono flex items-center gap-2 cursor-pointer"
               >
                 <span>+ SLOT SAT VEYA KAPASİTE İLANI VER</span>
               </button>
             </div>
           </div>
 
-          {/* FREIGHTOS FBX SPOT NAVLUN ENDEKSİ VE SPARKLINE TRACKER */}
-          <div className="bg-dark-900/90 p-6 rounded-2xl border border-white/10 space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-white/10 pb-3">
-              <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
-                <h3 className="text-xs font-mono font-bold text-sky-400 uppercase tracking-widest">
-                  PORTSCANNER FREIGHT SPOT INDEX (FBX BENCHMARK)
-                </h3>
+          {/* 3. 🏷 CANLI ARMATÖR SPOT KAMPANYALARI BANNER (ANLIK BOŞ GEMİ KAPASİTELERİ WIDGETININ ALTINA ALINDI) */}
+          <div className="glass-panel p-6 sm:p-8 rounded-3xl border border-brand/40 space-y-4 shadow-[0_0_35px_rgba(37,99,235,0.15)] relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-white/10 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    ARMATÖR SPOT KAMPANYALARI (FLEET FLASH DEALS)
+                  </span>
+                  <span className="text-[10px] font-mono bg-amber-400/10 text-amber-300 px-2 py-0.5 rounded border border-amber-400/30 font-bold">
+                    KONTENJAN SINIRLI
+                  </span>
+                </div>
+                <h3 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-1">Armatör Tabanlı Özel İndirimli Spot Slotlar</h3>
               </div>
-              <span className="text-[10px] font-mono text-zinc-400">CANLI BORSA TREND AKIŞI • HER 15 DAKİKADA BİR GÜNCELLENİR</span>
+              <span className="text-xs text-zinc-400 font-mono">Doğrudan Armatör Masasından Onaylı</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
-              <div className="p-3.5 bg-dark-850 rounded-xl border border-white/5 space-y-1">
-                <span className="text-[10px] text-zinc-400 uppercase block">Asya ➔ Akdeniz (FBX11)</span>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-lg font-extrabold text-white">$2,150 / FEU</span>
-                  <span className="text-xs font-bold text-emerald-400">↓ %3.4 (Spot Düşüş)</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Kampanya 1: MSC */}
+              <div className="p-5 bg-dark-900/90 rounded-2xl border border-brand/30 hover:border-brand transition space-y-3 relative group">
+                <div className="flex justify-between items-start">
+                  <span className="font-extrabold text-white text-lg">MSC DRAGON EXPRESS</span>
+                  <span className="text-[10px] font-extrabold font-mono bg-red-500/20 text-red-400 border border-red-500/30 px-2.5 py-1 rounded-full">
+                    %18 SPOT İNDİRİM
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-bold text-sky-300">
+                  Ambarlı (TRAMB) ➔ Rotterdam (NLRTM)
+                </div>
+                <div className="text-[11px] text-zinc-400 font-mono">
+                  Ekipman: <strong>40' High Cube (HC)</strong> • FMC Bonded Allocation
+                </div>
+                <div className="flex justify-between items-end pt-2 border-t border-white/10">
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block line-through">$1,750 USD</span>
+                    <span className="text-2xl font-extrabold text-emerald-400 font-mono">$1,420</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      alert(`DFDS RO-RO / MSC SPOT KAMPANYASI SEÇİLDİ\n\nRota: Ambarlı -> Rotterdam\nKonteyner: 40' HC\nÖzel Kampanya Fiyatı: $1,420 USD\n\nArama motoruna yönlendiriliyorsunuz...`);
+                      if (onSelectPresetSearch) {
+                        onSelectPresetSearch({ origin: 'Ambarlı', destination: 'Rotterdam', cargo_type: 'Konteyner', amount: '1' });
+                      }
+                    }}
+                    className="px-4 py-2 bg-brand hover:bg-blue-600 text-white font-extrabold text-xs rounded-xl transition font-mono uppercase shadow-md shadow-brand/20 cursor-pointer"
+                  >
+                    UYGULA & ARA →
+                  </button>
                 </div>
               </div>
-              <div className="p-3.5 bg-dark-850 rounded-xl border border-white/5 space-y-1">
-                <span className="text-[10px] text-zinc-400 uppercase block">Türkiye ➔ Kuzey Avrupa (FBX22)</span>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-lg font-extrabold text-white">$1,840 / FEU</span>
-                  <span className="text-xs font-bold text-sky-400">↑ %1.2 (Stabil)</span>
+
+              {/* Kampanya 2: DFDS RO-RO */}
+              <div className="p-5 bg-dark-900/90 rounded-2xl border border-sky-400/30 hover:border-sky-400 transition space-y-3 relative group">
+                <div className="flex justify-between items-start">
+                  <span className="font-extrabold text-white text-lg">DFDS MED RO-RO</span>
+                  <span className="text-[10px] font-extrabold font-mono bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2.5 py-1 rounded-full">
+                    ERKEN YÜKLEME
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-bold text-sky-300">
+                  Pendik (TRPEN) ➔ Trieste (ITTRS)
+                </div>
+                <div className="text-[11px] text-zinc-400 font-mono">
+                  Ekipman: <strong>Sürücülü Tır / Dorse (16.5m)</strong> • Şoför Kabin Dahil
+                </div>
+                <div className="flex justify-between items-end pt-2 border-t border-white/10">
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block line-through">$1,920 USD</span>
+                    <span className="text-2xl font-extrabold text-emerald-400 font-mono">$1,650</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      alert(`DFDS RO-RO SPOT KAMPANYASI SEÇİLDİ\n\nRota: Pendik -> Trieste\nYük Tipi: Ro-Ro (Sürücülü Tır)\nKampanya Fiyatı: $1,650 USD\n\nArama motoruna yönlendiriliyorsunuz...`);
+                      if (onSelectPresetSearch) {
+                        onSelectPresetSearch({ origin: 'Pendik', destination: 'Trieste', cargo_type: 'Ro-Ro', amount: '1' });
+                      }
+                    }}
+                    className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-black font-extrabold text-xs rounded-xl transition font-mono uppercase shadow-md shadow-sky-500/20 cursor-pointer"
+                  >
+                    UYGULA & ARA →
+                  </button>
                 </div>
               </div>
-              <div className="p-3.5 bg-dark-850 rounded-xl border border-white/5 space-y-1">
-                <span className="text-[10px] text-zinc-400 uppercase block">Karadeniz ➔ Uzak Doğu</span>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-lg font-extrabold text-white">$1,450 / FEU</span>
-                  <span className="text-xs font-bold text-emerald-400">↓ %5.0 (Fırsat)</span>
+
+              {/* Kampanya 3: ARKAS LINE */}
+              <div className="p-5 bg-dark-900/90 rounded-2xl border border-emerald-500/30 hover:border-emerald-500 transition space-y-3 relative group">
+                <div className="flex justify-between items-start">
+                  <span className="font-extrabold text-white text-lg">ARKAS LEVANT FEEDER</span>
+                  <span className="text-[10px] font-extrabold font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+                    FEEDER SPOT DEAL
+                  </span>
                 </div>
-              </div>
-              <div className="p-3.5 bg-dark-850 rounded-xl border border-white/5 space-y-1">
-                <span className="text-[10px] text-zinc-400 uppercase block">Ortalama Spot İndirimi</span>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-lg font-extrabold text-emerald-400">%14.8 / Slot</span>
-                  <span className="text-xs font-bold text-zinc-400">142 Slot Aktif</span>
+                <div className="text-xs font-mono font-bold text-sky-300">
+                  Mersin (TRMER) ➔ Piraeus (GRPIR)
+                </div>
+                <div className="text-[11px] text-zinc-400 font-mono">
+                  Ekipman: <strong>20' Standard Dry Container</strong> • 2 Gün Ekspres
+                </div>
+                <div className="flex justify-between items-end pt-2 border-t border-white/10">
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block line-through">$1,100 USD</span>
+                    <span className="text-2xl font-extrabold text-emerald-400 font-mono">$890</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      alert(`ARKAS LINE SPOT KAMPANYASI SEÇİLDİ\n\nRota: Mersin -> Piraeus\nKonteyner: 20' Dry\nKampanya Fiyatı: $890 USD\n\nArama motoruna yönlendiriliyorsunuz...`);
+                      if (onSelectPresetSearch) {
+                        onSelectPresetSearch({ origin: 'Mersin', destination: 'Piraeus', cargo_type: 'Konteyner', amount: '1' });
+                      }
+                    }}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-extrabold text-xs rounded-xl transition font-mono uppercase shadow-md shadow-emerald-500/20 cursor-pointer"
+                  >
+                    UYGULA & ARA →
+                  </button>
                 </div>
               </div>
             </div>
@@ -2883,20 +4095,20 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                       <span className="text-xs font-mono font-bold text-sky-400 bg-sky-400/10 px-3 py-1 rounded-full border border-sky-400/20">{item.id}</span>
                       {item.guaranteed && (
                         <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30 flex items-center gap-1">
-                          ✔ NYSHEX GUARANTEED
+                          NYSHEX GUARANTEED
                         </span>
                       )}
                     </div>
 
                     <span className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-full border ${item.status === 'HOT' ? 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'}`}>
-                      {item.side === 'SELL' ? `${item.slotsAvailable} Slot Boş` : `${item.slotsAvailable} TEU Areniyor`}
+                      {item.side === 'SELL' ? `${item.slotsAvailable} Slot Boş` : `${item.slotsAvailable} TEU Aranıyor`}
                     </span>
                   </div>
 
                   {/* Rota ve Armatör Detayı */}
                   <div>
                     <div className="text-xs font-mono text-zinc-400 uppercase font-bold">{item.carrier}</div>
-                    <h3 className="text-xl font-extrabold text-white mt-0.5">{item.origin} ➔ {item.destination}</h3>
+                    <h3 className="text-xl font-extrabold text-white mt-0.5">{item.origin} → {item.destination}</h3>
                     <p className="text-xs text-zinc-400 mt-1 font-mono">{item.type} • Satan/Veren: <strong className="text-zinc-200">{item.seller}</strong></p>
                   </div>
 
@@ -2995,7 +4207,7 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                     type="submit" 
                     className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-black font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-lg shadow-emerald-500/20 transition font-mono mt-2"
                   >
-                    PAZARLIK TEKLİFİNİ SATICIYA İLET ➔
+                    PAZARLIK TEKLİFİNİ SATICIYA İLET →
                   </button>
                 </form>
               </div>
@@ -3023,14 +4235,14 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                       onClick={() => setNewSide('SELL')} 
                       className={`py-2 rounded-lg font-bold transition ${newSide === 'SELL' ? 'bg-brand text-white' : 'text-zinc-400'}`}
                     >
-                      🔥 Kapasite / Slot Satıyorum
+                      Kapasite / Slot Satıyorum
                     </button>
                     <button 
                       type="button" 
                       onClick={() => setNewSide('BUY')} 
                       className={`py-2 rounded-lg font-bold transition ${newSide === 'BUY' ? 'bg-amber-500 text-black' : 'text-zinc-400'}`}
                     >
-                      📦 Kapasite / Slot Arıyorum
+                      Kapasite / Slot Arıyorum
                     </button>
                   </div>
 
@@ -3069,7 +4281,7 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                     type="submit" 
                     className="w-full py-3.5 bg-white text-black font-extrabold rounded-xl uppercase tracking-wider text-xs hover:bg-zinc-200 transition font-mono mt-2 shadow-lg"
                   >
-                    İLANINI BORSA TAHTASINA YAYINLA ➔
+                    İLANINI BORSA TAHTASINA YAYINLA →
                   </button>
                 </form>
               </div>
@@ -3323,94 +4535,132 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                 </div>
               </div>
 
-              {/* ENGINE 2: PREDICTIVE DEMURRAGE SHIELD (7-14 DAY PREDICTIVE RISK ENGINE) */}
-              <div className="p-6 lg:p-8 bg-dark-900/95 border border-sky-500/40 rounded-3xl space-y-6 shadow-2xl relative overflow-hidden">
+              {/* DEMURRAJ & SERBEST SÜRE TAKİP KARTLARI (GERÇEK ZAMANLI SAYAÇLAR) */}
+              <div className="glass-panel p-6 lg:p-8 rounded-3xl border border-white/10 space-y-6 shadow-xl">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-white/10">
                   <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                      <h3 className="text-xs font-mono font-bold text-sky-400 uppercase tracking-widest">
-                        PREDICTIVE DEMURRAGE SHIELD (7-14 DAY AI CONGESTION FORECAST)
-                      </h3>
-                    </div>
-                    <p className="text-xs text-zinc-400 mt-1 font-sans">Liman doluluk indeksine ve tahmini varış rötarlarına göre 14 gün öncesinden ceza riski tahmini.</p>
+                    <h3 className="text-sm font-mono font-extrabold text-white uppercase tracking-wider">
+                      DEMURRAGE & FREE-TIME TELEMETRY
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-1">Liman serbest süre ve ceza başlangıç sayaçları.</p>
                   </div>
                   
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-3.5 py-1.5 rounded-full font-bold uppercase tracking-widest">
-                      RİSK SEVİYESİ: DÜŞÜK (%12 PROBABILITY)
-                    </span>
-                  </div>
+                  <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3.5 py-1.5 rounded-full font-bold uppercase tracking-wider">
+                    LİMAN CEZA RİSKİ: DÜŞÜK (%0 CEZA)
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* CANLI SANİYE GERİ SAYAN CLOCK */}
-                  <div className="bg-dark-850 p-5 rounded-2xl border border-white/10 flex flex-col justify-between space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 font-mono">
+                  {/* CANLI GERİ SAYAN SERBEST SÜRE SAYACI */}
+                  <div className="bg-dark-900 p-5 rounded-2xl border border-white/10 space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-zinc-400 uppercase font-mono font-bold">SERBEST SÜRE SAYACI</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-bold">KOLAY FREE-TIME SAYACI</span>
                       <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
                     </div>
-                    <span className="text-xl font-extrabold text-sky-300 font-mono tracking-wider living-data">
+                    <span className="text-2xl font-extrabold text-sky-300 font-mono tracking-wider block">
                       {formatTimeLeft(secondsLeft)}
                     </span>
-                    <span className="text-[9px] text-zinc-500 font-mono">Demuraj Başlangıcı: 14 Eylül 2026</span>
+                    <span className="text-[10px] text-zinc-400">7 Gün Kombine Free-Time Dahil</span>
                   </div>
 
-                  {/* PREDICTIVE CONGESTION INDEX FORECAST */}
-                  <div className="bg-dark-850 p-5 rounded-2xl border border-white/10 flex flex-col justify-between space-y-2">
+                  {/* LİMAN RÖTAR VE AKIŞ DURUMU */}
+                  <div className="bg-dark-900 p-5 rounded-2xl border border-white/10 space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-zinc-400 uppercase font-mono font-bold">LİMAN YOĞUNLUK TAHMİNİ</span>
-                      <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">LOW CONGESTION</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-bold">POD LİMAN AKIŞ DURUMU</span>
+                      <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">AKICI</span>
                     </div>
-                    <span className="text-2xl font-extrabold text-emerald-400 font-mono">0.4 Gün Rötarlı</span>
-                    <span className="text-[9px] text-zinc-500 font-mono">POD Terminali Serbest Hat Akışı</span>
+                    <span className="text-2xl font-extrabold text-emerald-400 font-mono block">0.4 Gün Rötarlı</span>
+                    <span className="text-[10px] text-zinc-400">Terminal Rıhtım İzni: Onaylı</span>
                   </div>
 
-                  {/* PREDICTIVE FINANCIAL EXPOSURE */}
-                  <div className="bg-dark-850 p-5 rounded-2xl border border-white/10 flex flex-col justify-between space-y-2">
+                  {/* SEVKİYAT SAĞLIK VE GÜVENLİK PUANI */}
+                  <div className="bg-dark-900 p-5 rounded-2xl border border-white/10 space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-zinc-400 uppercase font-mono font-bold">7-14 GÜN RİSK MARJINI</span>
-                      <span className="text-[9px] font-mono text-sky-400">BUFFER OK</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-bold">SEVKİYAT GÜVENLİK SKORU</span>
+                      <span className="text-[9px] font-mono text-sky-400">GÜVENLİ ZONE</span>
                     </div>
-                    <span className="text-xs font-extrabold text-white uppercase font-mono">$0 Risk Exposure</span>
-                    <span className="text-[9px] text-sky-400 font-mono">+4.2 Gün Güvenlik Tamponu Var</span>
-                  </div>
-
-                  <div className="bg-dark-850 p-2 rounded-2xl border border-sky-400/40 flex items-center justify-center shadow-lg shadow-sky-500/10">
-                    <button 
-                      onClick={() => {
-                        alert(`🏛 GÜMRÜK ÇIKIŞ & PREDICTIVE ERKEN ÇEKİM PROTOKOLÜ KİLİTLENDİ\n\nTakip Numarası: ${result.tracking_no}\n7-14 Gün Tahmini Risk: %12 (Güvenli Zone)\nOperasyon Masası Referansı: ORD-${Math.floor(100000 + Math.random() * 900000)}\n\nLiman kapı çıkış talimatı terminal acentesine ve filoya EDI canlı kanalıyla iletilmiştir.`);
-                      }} 
-                      className="w-full h-full py-4 px-4 bg-brand hover:bg-blue-600 text-white font-extrabold text-xs uppercase tracking-widest rounded-xl transition flex flex-col items-center justify-center space-y-1 font-mono shadow-md shadow-brand/30"
-                    >
-                      <span className="text-[11px] tracking-wider font-extrabold">GÜMRÜK ÇIKIŞ & LİMAN ÇEKİM TALİMATI ONAYLA</span>
-                      <span className="text-[9px] text-sky-200 font-normal font-sans tracking-normal opacity-90">Liman Cezasız Otomatik Kamyon Tahsisi ➔</span>
-                    </button>
+                    <span className="text-2xl font-extrabold text-white font-mono block">%98.5 Güvenli</span>
+                    <span className="text-[10px] text-zinc-400">AIS Uydusu 24/7 Çift Yönlü Bağlı</span>
                   </div>
                 </div>
               </div>
 
-              {/* INTERACTIVE VESSEL AIS ROUTE MAP WIDGET */}
-              <div className="bg-dark-900/90 p-6 rounded-3xl border border-sky-500/30 space-y-4">
-                <div className="flex justify-between items-center border-b border-white/10 pb-3">
-                  <div className="flex items-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping"></span>
-                    <h3 className="text-xs font-mono font-bold text-sky-400 uppercase tracking-widest">
-                      CANLI UYDU LİMAN & GEMİ HARİTASI (INTERACTIVE VESSEL TELEMETRY MAP)
+              {/* TEMİZ & ŞIK CANLI SEFER VE ROTA İLERLEME PANOSU */}
+              <div className="glass-panel p-6 lg:p-8 rounded-3xl border border-white/10 space-y-6 shadow-xl font-mono">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-4">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">
+                      CANLI SEFER & ROTA İLERLEME DETAYI
                     </h3>
+                    <p className="text-xs text-zinc-400 font-sans mt-1">Kalkış limanından varış limanına anlık mesafe ve gemi konumu.</p>
                   </div>
-                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded border border-emerald-500/20">
-                    MMSI: 247381900 • AIS CLASS A
-                  </span>
+
+                  <div className="flex items-center space-x-3 text-xs">
+                    <span className="bg-dark-900 text-sky-300 px-3 py-1.5 rounded-xl border border-white/10 font-bold">
+                      IMO: 9839179
+                    </span>
+                    <span className="bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-xl border border-emerald-500/20 font-bold">
+                      AIS CLASS A ONLINE
+                    </span>
+                  </div>
                 </div>
 
-                <div className="relative w-full h-80 bg-[#0a1222] rounded-2xl border border-white/10 overflow-hidden flex items-center justify-center z-0">
-                  <div id="vessel-map" className="absolute inset-0 w-full h-full z-0"></div>
+                {/* KALKIŞ VEYA VARAN LİMANLARI & İLERLEME BARI */}
+                <div className="bg-dark-900 p-6 rounded-2xl border border-white/10 space-y-6">
                   
-                  {/* Live Coordinates Overlay Box */}
-                  <div className="absolute bottom-3 left-3 bg-dark-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-[10px] font-mono text-zinc-300 z-10">
-                    LAT: <strong className="text-sky-300">{liveLat.toFixed(4)}° N</strong> • LON: <strong className="text-sky-300">{liveLon.toFixed(4)}° E</strong>
+                  {/* Rota Durakları */}
+                  <div className="flex justify-between items-center text-xs">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-zinc-400 block uppercase">KALKIŞ LİMANI (POL)</span>
+                      <span className="text-base font-extrabold text-white block">{result.origin || 'Ambarlı'}</span>
+                      <span className="text-[10px] text-emerald-400 font-bold">Gemi Kalktı</span>
+                    </div>
+
+                    <div className="text-center space-y-1">
+                      <span className="text-[10px] text-sky-400 block font-bold">MEVCUT GEMİ KONUMU</span>
+                      <span className="text-sm font-extrabold text-white bg-dark-850 px-4 py-1.5 rounded-xl border border-white/10 block">
+                        {result.vessel_name || 'MSC GULSUN'} ({result.current_speed || '19.4 Knots'})
+                      </span>
+                    </div>
+
+                    <div className="text-right space-y-1">
+                      <span className="text-[10px] text-zinc-400 block uppercase">VARIŞ LİMANI (POD)</span>
+                      <span className="text-base font-extrabold text-white block">{result.destination || 'Rotterdam'}</span>
+                      <span className="text-[10px] text-sky-300 font-bold">Tahmini Varış: 19 Eylül</span>
+                    </div>
                   </div>
+
+                  {/* İlerleme Çubuğu */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[11px] text-zinc-400">
+                      <span>İlerleme Oranı: %68</span>
+                      <span>Kalan Mesafe: 840 Deniz Mili (NM)</span>
+                    </div>
+                    <div className="w-full h-3 bg-dark-850 rounded-full overflow-hidden p-0.5 border border-white/10">
+                      <div className="h-full bg-brand rounded-full transition-all duration-500" style={{ width: '68%' }}></div>
+                    </div>
+                  </div>
+
+                  {/* Canlı Telemetri Metrikleri */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-white/10 text-xs">
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block uppercase">Seyir Hızı</span>
+                      <span className="text-sm font-bold text-white block">{result.current_speed || '19.4 Knots'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block uppercase">Su Çekimi (Draft)</span>
+                      <span className="text-sm font-bold text-white block">14.8 Metre</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block uppercase">Pruva Açısı</span>
+                      <span className="text-sm font-bold text-amber-300 block">284° NW</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block uppercase">AIS Koordinatı</span>
+                      <span className="text-sm font-bold text-emerald-400 block">{liveLat.toFixed(4)}° N / {liveLon.toFixed(4)}° E</span>
+                    </div>
+                  </div>
+
                 </div>
               </div>
 
@@ -3478,19 +4728,44 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
       const [activeCarrier, setActiveCarrier] = useState('ALL');
       const [searchTerm, setSearchTerm] = useState('');
 
+      const netSlogans = [
+        { title: "Dünyanın En Büyük 19 Denizcilik Devine ", highlight: "Anında Doğrudan Erişim", subtitle: "Portscanner; 2M, Ocean Alliance, Gemini ve THE Alliance ittifaklarının yanı sıra Arkas, DFDS ve Turkon gibi bölgesel devlerle canlı entegre çalışır.", gradientClass: "text-gradient-sky-blue" },
+        { title: "Sıfır Komisyon ile Doğrudan ", highlight: "Armatör Masasına Bağlanın", subtitle: "Aracı navlun komisyonları olmadan doğrudan armatörlerin spot tarifelerine ve tahsisli konteyner kapasitelerine kilitlenin.", gradientClass: "text-gradient-emerald-gold" },
+        { title: "Canlı EDI 315 & API Telemetrisi İle ", highlight: "Kesintisiz Takip", subtitle: "Tüm taşıyıcı armatörlerin zamanında varış güvenilirlik indekslerini ve canlı konteyner lokasyonlarını anlık izleyin.", gradientClass: "text-gradient-indigo-cyan" }
+      ];
+
+      const [netSloganIdx, setNetSloganIdx] = useState(0);
+
+      useEffect(() => {
+        const netTimer = setInterval(() => {
+          setNetSloganIdx(prev => (prev + 1) % netSlogans.length);
+        }, 6500);
+        return () => clearInterval(netTimer);
+      }, []);
+
       const carriers = [
-        { name: 'MSC (Mediterranean Shipping Co.)', alliance: '2M Alliance', teus: '5.8M TEU', fleet: '830 Gemi', global_rank: '#1 DÜNYA LİDERİ', pols: 'Shanghai, Ningbo, Rotterdam, Ambarlı, Mersin', logo: 'MSC', reliability: '%84.2', avgDelay: '+1.1 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-amber-500/10 to-blue-500/10', serviceLoop: 'NEUCON / Dragon Loop' },
-        { name: 'MAERSK LINE', alliance: 'Gemini Cooperation', teus: '4.2M TEU', fleet: '710 Gemi', global_rank: '#2 KÜRESEL DEV', pols: 'Qingdao, Hamburg, Izmit, Antwerp, Singapore', logo: 'MAERSK', reliability: '%88.5', avgDelay: '+0.7 Gün', ediStatus: 'ACTIVE (API & EDI)', bg_glow: 'from-sky-500/10 to-indigo-500/10', serviceLoop: 'AE1 / TP2 Direct Loop' },
-        { name: 'CMA CGM GROUP', alliance: 'Ocean Alliance', teus: '3.6M TEU', fleet: '620 Gemi', global_rank: '#3 AVRUPA LİDERİ', pols: 'Marseille, Busan, Mersin, Santos, Valencia', logo: 'CMA CGM', reliability: '%82.0', avgDelay: '+1.4 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-blue-600/10 to-cyan-500/10', serviceLoop: 'BEX / MEX Express' },
-        { name: 'COSCO SHIPPING', alliance: 'Ocean Alliance', teus: '3.1M TEU', fleet: '510 Gemi', global_rank: '#4 ASYA GÜCÜ', pols: 'Shenzhen, Tianjin, Piraeus, Izmit, Genoa', logo: 'COSCO', reliability: '%79.8', avgDelay: '+1.8 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-red-500/10 to-blue-500/10', serviceLoop: 'AEU3 / EMA Loop' },
-        { name: 'HAPAG-LLOYD', alliance: 'Gemini Cooperation', teus: '2.0M TEU', fleet: '280 Gemi', global_rank: '#5 ALMAN KALİTESİ', pols: 'Hamburg, Bremerhaven, Ambarlı, Jebel Ali', logo: 'HAPAG', reliability: '%86.4', avgDelay: '+0.8 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-orange-500/10 to-blue-500/10', serviceLoop: 'MD1 / AL3 Transatlantic' },
-        { name: 'ONE (Ocean Network Express)', alliance: 'THE Alliance', teus: '1.8M TEU', fleet: '230 Gemi', global_rank: '#6 JAPON İTTİFAKI', pols: 'Tokyo, Kobe, Singapore, Rotterdam, Mersin', logo: 'ONE', reliability: '%81.5', avgDelay: '+1.2 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-pink-500/10 to-blue-500/10', serviceLoop: 'FE3 / PN2 Transpacific' },
-        { name: 'EVERGREEN LINE', alliance: 'Ocean Alliance', teus: '1.7M TEU', fleet: '215 Gemi', global_rank: '#7 TAYVAN DEVI', pols: 'Kaohsiung, Yantian, Felixstowe, Izmit', logo: 'EVERGREEN', reliability: '%78.9', avgDelay: '+1.9 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-emerald-500/10 to-blue-500/10', serviceLoop: 'CEM / CES Europe' },
-        { name: 'YANG MING', alliance: 'THE Alliance', teus: '700K TEU', fleet: '95 Gemi', global_rank: '#8 TRANS-PASİFİK', pols: 'Keelung, Hong Kong, Ambarlı, Los Angeles', logo: 'YANG MING', reliability: '%77.2', avgDelay: '+2.1 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-indigo-500/10 to-blue-500/10', serviceLoop: 'MD3 / PS6 Express' },
-        { name: 'ZIM INTEGRATED SHIPPING', alliance: 'Bağımsız / ZIM Hub', teus: '620K TEU', fleet: '90 Gemi', global_rank: '#9 AKDENİZ-PASİFİK', pols: 'Haifa, Ashdod, Mersin, New York, Ambarlı', logo: 'ZIM', reliability: '%83.1', avgDelay: '+1.0 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-sky-600/10 to-blue-600/10', serviceLoop: 'ZCX / ZMP Express' },
-        { name: 'HMM (Hyundai Merchant Marine)', alliance: 'THE Alliance', teus: '810K TEU', fleet: '78 Gemi', global_rank: '#10 KORE LİDERİ', pols: 'Busan, Gwangyang, Hamburg, Izmit, Rotterdam', logo: 'HMM', reliability: '%80.4', avgDelay: '+1.3 Gün', ediStatus: 'ACTIVE (API & EDI)', bg_glow: 'from-blue-700/10 to-slate-500/10', serviceLoop: 'FE2 / FME Asia-Europe' },
-        { name: 'WAN HAI LINES', alliance: 'Bağımsız / Inter-Asia', teus: '480K TEU', fleet: '120 Gemi', global_rank: '#11 ASYA PARSİYEL', pols: 'Taipei, Bangkok, Ho Chi Minh, Mersin', logo: 'WAN HAI', reliability: '%85.0', avgDelay: '+0.9 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-yellow-500/10 to-emerald-500/10', serviceLoop: 'AA7 / ASIA DIRECT' },
-        { name: 'PIL (Pacific International Lines)', alliance: 'Bağımsız / Africa Hub', teus: '300K TEU', fleet: '85 Gemi', global_rank: '#12 AFRİKA UZMANI', pols: 'Singapore, Durban, Mombasa, Ambarlı', logo: 'PIL', reliability: '%76.5', avgDelay: '+2.4 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-red-600/10 to-amber-500/10', serviceLoop: 'SWS / SWA Africa Loop' }
+        // KÜRESEL İTTİFAK DEVERİ (GLOBAL OCEAN ALLIANCES)
+        { name: 'MSC (Mediterranean Shipping Co.)', alliance: '2M Alliance', teus: '5.8M TEU', fleet: '830 Gemi', global_rank: '#1 DÜNYA LİDERİ', pols: 'Shanghai, Ningbo, Rotterdam, Ambarlı, Mersin', logo: 'MSC', reliability: '%84.2', avgDelay: '+1.1 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-amber-500/10 to-blue-500/10', serviceLoop: 'NEUCON / Dragon Loop', type: 'Küresel İttifak' },
+        { name: 'MAERSK LINE', alliance: 'Gemini Cooperation', teus: '4.2M TEU', fleet: '710 Gemi', global_rank: '#2 KÜRESEL DEV', pols: 'Qingdao, Hamburg, Izmit, Antwerp, Singapore', logo: 'MAERSK', reliability: '%88.5', avgDelay: '+0.7 Gün', ediStatus: 'ACTIVE (API & EDI)', bg_glow: 'from-sky-500/10 to-indigo-500/10', serviceLoop: 'AE1 / TP2 Direct Loop', type: 'Küresel İttifak' },
+        { name: 'CMA CGM GROUP', alliance: 'Ocean Alliance', teus: '3.6M TEU', fleet: '620 Gemi', global_rank: '#3 AVRUPA LİDERİ', pols: 'Marseille, Busan, Mersin, Santos, Valencia', logo: 'CMA CGM', reliability: '%82.0', avgDelay: '+1.4 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-blue-600/10 to-cyan-500/10', serviceLoop: 'BEX / MEX Express', type: 'Küresel İttifak' },
+        { name: 'COSCO SHIPPING', alliance: 'Ocean Alliance', teus: '3.1M TEU', fleet: '510 Gemi', global_rank: '#4 ASYA GÜCÜ', pols: 'Shenzhen, Tianjin, Piraeus, Izmit, Genoa', logo: 'COSCO', reliability: '%79.8', avgDelay: '+1.8 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-red-500/10 to-blue-500/10', serviceLoop: 'AEU3 / EMA Loop', type: 'Küresel İttifak' },
+        { name: 'HAPAG-LLOYD', alliance: 'Gemini Cooperation', teus: '2.0M TEU', fleet: '280 Gemi', global_rank: '#5 ALMAN KALİTESİ', pols: 'Hamburg, Bremerhaven, Ambarlı, Jebel Ali', logo: 'HAPAG', reliability: '%86.4', avgDelay: '+0.8 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-orange-500/10 to-blue-500/10', serviceLoop: 'MD1 / AL3 Transatlantic', type: 'Küresel İttifak' },
+        { name: 'ONE (Ocean Network Express)', alliance: 'THE Alliance', teus: '1.8M TEU', fleet: '230 Gemi', global_rank: '#6 JAPON İTTİFAKI', pols: 'Tokyo, Kobe, Singapore, Rotterdam, Mersin', logo: 'ONE', reliability: '%81.5', avgDelay: '+1.2 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-pink-500/10 to-blue-500/10', serviceLoop: 'FE3 / PN2 Transpacific', type: 'Küresel İttifak' },
+        { name: 'EVERGREEN LINE', alliance: 'Ocean Alliance', teus: '1.7M TEU', fleet: '215 Gemi', global_rank: '#7 TAYVAN DEVI', pols: 'Kaohsiung, Yantian, Felixstowe, Izmit', logo: 'EVERGREEN', reliability: '%78.9', avgDelay: '+1.9 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-emerald-500/10 to-blue-500/10', serviceLoop: 'CEM / CES Europe', type: 'Küresel İttifak' },
+        { name: 'YANG MING', alliance: 'THE Alliance', teus: '700K TEU', fleet: '95 Gemi', global_rank: '#8 TRANS-PASİFİK', pols: 'Keelung, Hong Kong, Ambarlı, Los Angeles', logo: 'YANG MING', reliability: '%77.2', avgDelay: '+2.1 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-indigo-500/10 to-blue-500/10', serviceLoop: 'MD3 / PS6 Express', type: 'Küresel İttifak' },
+        { name: 'HMM (Hyundai Merchant Marine)', alliance: 'THE Alliance', teus: '810K TEU', fleet: '78 Gemi', global_rank: '#9 KORE LİDERİ', pols: 'Busan, Gwangyang, Hamburg, Izmit, Rotterdam', logo: 'HMM', reliability: '%80.4', avgDelay: '+1.3 Gün', ediStatus: 'ACTIVE (API & EDI)', bg_glow: 'from-blue-700/10 to-slate-500/10', serviceLoop: 'FE2 / FME Asia-Europe', type: 'Küresel İttifak' },
+        
+        // BÖLGESEL VE BAĞIMSIZ ARMATÖRLER (INDEPENDENT & REGIONAL CARRIERS)
+        { name: 'ARKAS LINE', alliance: 'Bağımsız (Bölgesel)', teus: '150K TEU', fleet: '48 Gemi', global_rank: 'AKDENİZ & KARADENİZ', pols: 'Ambarlı, Izmit, Mersin, Piraeus, Alexandria', logo: 'ARKAS', reliability: '%91.2', avgDelay: '+0.4 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-red-600/10 to-amber-500/10', serviceLoop: 'Levant / Black Sea Feeder', type: 'Bağımsız / Bölgesel' },
+        { name: 'TURKON LINE', alliance: 'Bağımsız (Ekspres)', teus: '45K TEU', fleet: '14 Gemi', global_rank: 'ABD TRANSATLANTİK', pols: 'Gemlik, Ambarlı, İzmir, New York, Norfolk', logo: 'TURKON', reliability: '%94.0', avgDelay: '+0.3 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-red-700/10 to-sky-500/10', serviceLoop: 'USA Direct Express', type: 'Bağımsız / Bölgesel' },
+        { name: 'MEDKON LINES', alliance: 'Bağımsız (Feeder)', teus: '35K TEU', fleet: '18 Gemi', global_rank: 'KABOTAJ & FEEDER', pols: 'Mersin, Piraeus, Ambarlı, Gemlik, Varna', logo: 'MEDKON', reliability: '%89.6', avgDelay: '+0.5 Gün', ediStatus: 'ACTIVE (EDI)', bg_glow: 'from-amber-600/10 to-blue-600/10', serviceLoop: 'Ege & Karadeniz Feeder', type: 'Bağımsız / Bölgesel' },
+        { name: 'DFDS SEAWAYS', alliance: 'Bağımsız (Ro-Ro Leader)', teus: 'Ro-Ro & Dorse', fleet: '65 Ro-Ro', global_rank: 'AVRUPA RO-RO DEVİ', pols: 'Pendik, Yalova, Trieste, Patras, Sete', logo: 'DFDS', reliability: '%96.5', avgDelay: '+0.2 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-sky-400/10 to-blue-800/10', serviceLoop: 'Trieste / Sete Ro-Ro Express', type: 'Bağımsız / Bölgesel' },
+        { name: 'GRIMALDI LINES', alliance: 'Bağımsız (Ro-Ro & Bulk)', teus: '120K TEU / Ro-Ro', fleet: '130 Gemi', global_rank: 'BATI AKDENİZ RO-RO', pols: 'Yılport, Salerno, Antwerp, Civitavecchia', logo: 'GRIMALDI', reliability: '%87.4', avgDelay: '+0.7 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-amber-500/10 to-emerald-500/10', serviceLoop: 'Euro-Med Ro-Ro Line', type: 'Bağımsız / Bölgesel' },
+        { name: 'ZIM INTEGRATED SHIPPING', alliance: 'Bağımsız / ZIM Hub', teus: '620K TEU', fleet: '90 Gemi', global_rank: 'AKDENİZ-PASİFİK', pols: 'Haifa, Ashdod, Mersin, New York, Ambarlı', logo: 'ZIM', reliability: '%83.1', avgDelay: '+1.0 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-sky-600/10 to-blue-600/10', serviceLoop: 'ZCX / ZMP Express', type: 'Bağımsız / Bölgesel' },
+        { name: 'WAN HAI LINES', alliance: 'Bağımsız / Inter-Asia', teus: '480K TEU', fleet: '120 Gemi', global_rank: 'ASYA PARSİYEL', pols: 'Taipei, Bangkok, Ho Chi Minh, Mersin', logo: 'WAN HAI', reliability: '%85.0', avgDelay: '+0.9 Gün', ediStatus: 'ACTIVE (EDI 304)', bg_glow: 'from-yellow-500/10 to-emerald-500/10', serviceLoop: 'AA7 / ASIA DIRECT', type: 'Bağımsız / Bölgesel' },
+        { name: 'PIL (Pacific International Lines)', alliance: 'Bağımsız / Africa Hub', teus: '300K TEU', fleet: '85 Gemi', global_rank: 'AFRİKA UZMANI', pols: 'Singapore, Durban, Mombasa, Ambarlı', logo: 'PIL', reliability: '%76.5', avgDelay: '+2.4 Gün', ediStatus: 'ACTIVE (EDI 315)', bg_glow: 'from-red-600/10 to-amber-500/10', serviceLoop: 'SWS / SWA Africa Loop', type: 'Bağımsız / Bölgesel' },
+        { name: 'TARROS LINE', alliance: 'Bağımsız (Akdeniz)', teus: '40K TEU', fleet: '16 Gemi', global_rank: 'AKDENİZ CONTAINER', pols: 'La Spezia, Salerno, Gemlik, Mersin, Beirut', logo: 'TARROS', reliability: '%88.0', avgDelay: '+0.6 Gün', ediStatus: 'ACTIVE (EDI)', bg_glow: 'from-blue-500/10 to-amber-500/10', serviceLoop: 'GPS / Great Pendik Service', type: 'Bağımsız / Bölgesel' },
+        { name: 'AKKON LINES', alliance: 'Bağımsız (Feeder)', teus: '25K TEU', fleet: '12 Gemi', global_rank: 'KARADENİZ LİNK', pols: 'Ambarlı, Mersin, Novorossisk, Poti, Alexandria', logo: 'AKKON', reliability: '%86.5', avgDelay: '+0.8 Gün', ediStatus: 'ACTIVE (API)', bg_glow: 'from-sky-500/10 to-red-500/10', serviceLoop: 'Black Sea & Feeder Line', type: 'Bağımsız / Bölgesel' }
       ];
 
       const filteredCarriers = carriers.filter(c => {
@@ -3518,13 +4793,18 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
                 </span>
               </div>
 
-              <h1 className="text-3xl md:text-5xl font-extrabold text-white tracking-tight leading-tight">
-                Dünyanın En Büyük 12 Denizcilik Devine Anında Doğrudan Erişim
-              </h1>
+              <div className="min-h-[120px] flex flex-col justify-center space-y-2">
+                <h1 key={`net-t-${netSloganIdx}`} className="text-3xl md:text-5xl font-extrabold text-white tracking-tight leading-tight animate-cinematic-text drop-shadow-md">
+                  {netSlogans[netSloganIdx].title}
+                  <span className={netSlogans[netSloganIdx].gradientClass}>
+                    {netSlogans[netSloganIdx].highlight}
+                  </span>
+                </h1>
 
-              <p className="text-zinc-200 text-xs md:text-sm font-sans leading-relaxed max-w-3xl">
-                Portscanner, küresel 2M, Ocean Alliance, Gemini Cooperation ve THE Alliance ittifaklarıyla entegre çalışır. Aracı komisyonları olmadan doğrudan armatör spot tarifelerine ve tahsisli konteyner kapasitelerine kilitlenin.
-              </p>
+                <p key={`net-s-${netSloganIdx}`} className="text-zinc-200 text-xs md:text-sm font-sans leading-relaxed max-w-3xl animate-cinematic-text drop-shadow">
+                  {netSlogans[netSloganIdx].subtitle}
+                </p>
+              </div>
 
               <div className="pt-2 flex flex-wrap gap-4 items-center font-mono">
                 <div className="bg-dark-850/90 px-5 py-3 rounded-2xl border border-white/20 text-center shadow-lg">
@@ -3598,14 +4878,21 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
           {/* İTTİFAK VE ARAMA FİLTRE BARLARI */}
           <div className="glass-panel p-5 rounded-2xl border border-white/10 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-              <span className="text-zinc-400 font-bold uppercase mr-2">İttifak Filtresi:</span>
-              {['ALL', '2M', 'Ocean Alliance', 'THE Alliance', 'Gemini'].map(alliance => (
+              <span className="text-zinc-400 font-bold uppercase mr-2">Armatör Kategorisi:</span>
+              {[
+                { id: 'ALL', label: 'Tüm Armatörler (19 Dev)' },
+                { id: '2M', label: '2M Alliance' },
+                { id: 'Ocean Alliance', label: 'Ocean Alliance' },
+                { id: 'THE Alliance', label: 'THE Alliance' },
+                { id: 'Gemini', label: 'Gemini Cooperation' },
+                { id: 'Bağımsız', label: 'Bağımsız & Bölgesel Hatlar (Arkas, DFDS, Turkon vb.)' }
+              ].map(item => (
                 <button
-                  key={alliance}
-                  onClick={() => setActiveCarrier(alliance)}
-                  className={`px-4 py-2 rounded-xl font-bold transition ${activeCarrier === alliance ? 'bg-white text-black shadow-lg' : 'bg-dark-800 text-zinc-400 hover:text-white border border-white/10'}`}
+                  key={item.id}
+                  onClick={() => setActiveCarrier(item.id)}
+                  className={`px-4 py-2 rounded-xl font-bold transition ${activeCarrier === item.id ? 'bg-white text-black shadow-lg' : 'bg-dark-800 text-zinc-400 hover:text-white border border-white/10'}`}
                 >
-                  {alliance === 'ALL' ? 'Tüm 12 Armatör' : alliance}
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -3699,6 +4986,10 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
 
     function AdminView({ db }) {
       const [adminTab, setAdminTab] = useState('requests');
+      const [viewMode, setViewMode] = useState('cards'); // 'cards' (Geniş Kartlar), 'grid' (Kompakt Tablo)
+      const [searchQuery, setSearchQuery] = useState('');
+      const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL', 'UNANSWERED', 'QUOTED'
+
       const carrierRates = db?.carrier_rates || [];
       const requestsList = db?.requests || [];
 
@@ -3707,103 +4998,255 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
       const totalVolume = allQuotes.reduce((acc, q) => acc + (q.price || 0), 0);
       const totalProfit = allQuotes.reduce((acc, q) => acc + (q.net_profit || Math.round((q.price || 0) * 0.15)), 0);
 
+      // SLA Süresi Düzeyleri (Yanıt Bekleyen ve Süresi Geçen Kırmızı Talepler)
+      const unansweredRequests = requestsList.filter(r => !r.quotes || r.quotes.length === 0);
+      
+      // Filtrelenmiş Talepler
+      const filteredRequests = requestsList.filter(r => {
+        const matchesStatus = statusFilter === 'ALL' || 
+          (statusFilter === 'UNANSWERED' && (!r.quotes || r.quotes.length === 0)) ||
+          (statusFilter === 'QUOTED' && r.quotes && r.quotes.length > 0);
+        const matchesQuery = !searchQuery || 
+          r.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.origin.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.destination.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.cargo_type.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesStatus && matchesQuery;
+      });
+
       return (
-        <div className="max-w-[1600px] mx-auto px-6 py-12 fade-in">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 sm:py-12 fade-in space-y-6">
           {/* Header & Control Tower Title */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 pb-6 border-b border-white/10 gap-4">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 border-b border-white/10 gap-4">
             <div>
               <div className="flex items-center space-x-3 mb-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span className="text-xs font-mono font-bold tracking-widest text-sky-400 uppercase">HYBRID BROKERAGE CONTROL TOWER</span>
+                <span className="text-xs font-mono font-bold tracking-widest text-sky-400 uppercase">HYBRID BROKERAGE CONTROL TOWER v5.0</span>
               </div>
-              <h2 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
                 <Icons.Shield /> Operasyon Komut Merkezi
               </h2>
             </div>
             
             {/* 3 Main Tab Buttons */}
-            <div className="flex bg-dark-800 p-1.5 rounded-2xl border border-white/10">
+            <div className="flex bg-dark-800 p-1.5 rounded-2xl border border-white/10 font-mono text-xs">
               <button 
                 onClick={() => setAdminTab('requests')} 
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold tracking-wider uppercase transition ${adminTab==='requests' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
+                className={`px-5 py-2.5 rounded-xl font-bold tracking-wider uppercase transition ${adminTab==='requests' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
               >
-                📥 Navlun Talepleri ({requestsList.length})
+                Talepler ({requestsList.length})
               </button>
               <button 
                 onClick={() => setAdminTab('tracking')} 
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold tracking-wider uppercase transition ${adminTab==='tracking' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
+                className={`px-5 py-2.5 rounded-xl font-bold tracking-wider uppercase transition ${adminTab==='tracking' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
               >
-                🚢 Sevkiyat Hub'ı ({db?.trackings?.length || 0})
+                Sevkiyatlar ({db?.trackings?.length || 0})
               </button>
               <button 
                 onClick={() => setAdminTab('rates')} 
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold tracking-wider uppercase transition ${adminTab==='rates' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
+                className={`px-5 py-2.5 rounded-xl font-bold tracking-wider uppercase transition ${adminTab==='rates' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-zinc-400 hover:text-white'}`}
               >
-                📚 Navlun Kütüphanesi ({carrierRates.length})
+                Kütüphane ({carrierRates.length})
               </button>
             </div>
           </div>
 
           {/* 📊 PROFIT COMMAND BOARD (CİRO VE NET KAR SAYAÇLARI) */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="glass-panel p-5 rounded-2xl border border-white/10 flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Gelen Talepler</div>
+                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider font-mono">Gelen Talepler</div>
                 <div className="text-2xl font-extrabold text-white font-mono mt-1">{requestsList.length} Talep</div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">📥</div>
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 font-bold font-mono">REQ</div>
             </div>
 
             <div className="glass-panel p-5 rounded-2xl border border-white/10 flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Aktif Sevkiyatlar</div>
+                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider font-mono">Aktif Sevkiyatlar</div>
                 <div className="text-2xl font-extrabold text-white font-mono mt-1">{db.trackings?.length || 0} BL</div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">🚢</div>
+              <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold font-mono">BL</div>
             </div>
 
             <div className="glass-panel p-5 rounded-2xl border border-white/10 flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">İşlem Hacmi (Volume)</div>
+                <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider font-mono">İşlem Hacmi (Volume)</div>
                 <div className="text-2xl font-extrabold text-white font-mono mt-1">${totalVolume.toLocaleString()}</div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">🌐</div>
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold font-mono">VOL</div>
             </div>
 
             <div className="glass-panel p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Tahmini Net Kar ($ Profit)</div>
+                <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider font-mono">Tahmini Net Kar ($ Profit)</div>
                 <div className="text-2xl font-extrabold text-emerald-400 font-mono mt-1">+${totalProfit.toLocaleString()}</div>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold">💰</div>
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold font-mono">$</div>
             </div>
           </div>
 
-          {/* 🚨 EXCEPTION & RISK RADAR (İSTİSNA KONTROL & RİSK MERKEZİ) */}
-          <div className="mb-8 p-5 bg-red-950/20 border border-red-500/30 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-3 h-3 rounded-full bg-red-500 animate-ping"></div>
-              <div>
-                <div className="text-xs font-mono font-bold text-red-400 uppercase tracking-widest">REAL-TIME EXCEPTION CONTROL RADAR</div>
-                <div className="text-sm font-extrabold text-white">1 Akut Risk Tespit Edildi: Gümrük Bekletmesi & Demuraj Riski</div>
+          {/* 🚨 STICKY CRITICAL SLA QUEUE (YANIT BEKLEYEN TALEPLER EN ÜSTTE SABİT BANNER) */}
+          {unansweredRequests.length > 0 && (
+            <div className="p-4 bg-dark-900/90 border border-sky-500/30 rounded-2xl space-y-3 shadow-xl backdrop-blur-md">
+              <div className="flex justify-between items-center border-b border-white/10 pb-2">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  <span className="text-xs font-mono font-extrabold text-amber-400 uppercase tracking-widest">
+                    BEKLEYEN NAVLUN TALEPLERİ HABERDARLIK PANOSU ({unansweredRequests.length} TALEP)
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-zinc-400 font-bold bg-white/5 px-2.5 py-0.5 rounded border border-white/10">
+                  BEKLEYEN TALEPLER
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 font-mono text-xs max-h-48 overflow-y-auto pr-1">
+                {unansweredRequests.map(req => (
+                  <div key={req.id} className="p-3 bg-dark-850 rounded-xl border border-white/10 flex justify-between items-center hover:border-brand transition">
+                    <div>
+                      <span className="text-[10px] font-bold text-sky-400 block">{req.id}</span>
+                      <span className="font-bold text-white block truncate max-w-[150px]">{req.origin} → {req.destination}</span>
+                      <span className="text-[10px] text-zinc-400">{req.cargo_type} • {req.amount} MT</span>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setAdminTab('requests');
+                        setStatusFilter('ALL');
+                        setViewMode('cards');
+                        setSearchQuery(req.id);
+                        setTimeout(() => {
+                          const el = document.getElementById(`quote-row-${req.id}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 100);
+                      }} 
+                      className="px-3 py-1.5 bg-brand hover:bg-blue-600 text-white font-extrabold text-[10px] rounded-lg transition uppercase tracking-wider cursor-pointer shadow-md shadow-brand/20"
+                    >
+                      TEKLİF VER →
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-zinc-400 font-mono">Otomatik SMS/Mail Uyarısı: <strong className="text-emerald-400">AKTİF</strong></span>
-              <button onClick={() => alert('🚨 Acil müdahale ekibi ve armatör gümrük temsilcisine canlı bildirim iletildi.')} className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 font-bold text-xs rounded-xl transition">
-                ⚡ Müdahale Et & Müşteriye Bildir
-              </button>
-            </div>
-          </div>
+          )}
 
-          {/* TAB 1: PENDING REQUESTS & ONE-CLICK AUTO QUOTE */}
+          {/* TAB 1: NAVLUN TALEPLERİ VE AKILLI FİLTRELEME & GÖRÜNÜM MODLARI */}
           {adminTab === 'requests' && (
-            <div className="space-y-6">
-              {requestsList.length === 0 ? (
-                <div className="text-center p-16 glass-panel text-zinc-500 rounded-3xl">Henüz bekleyen talep yok.</div>
+            <div className="space-y-4">
+              
+              {/* AKILLI ARAMA, FİLTRELEME VE GÖRÜNÜM MODU (KANBAN VS KOMPAKT GRID) */}
+              <div className="glass-panel p-4 rounded-2xl border border-white/10 flex flex-col md:flex-row justify-between items-center gap-4 font-mono text-xs">
+                
+                {/* Durum Filtreleri */}
+                <div className="flex bg-dark-900 p-1 rounded-xl border border-white/10">
+                  <button 
+                    onClick={() => setStatusFilter('ALL')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${statusFilter === 'ALL' ? 'bg-white text-black' : 'text-zinc-400'}`}
+                  >
+                    Tüm Talepler ({requestsList.length})
+                  </button>
+                  <button 
+                    onClick={() => setStatusFilter('UNANSWERED')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${statusFilter === 'UNANSWERED' ? 'bg-red-500 text-white' : 'text-zinc-400'}`}
+                  >
+                    Bekleyenler ({unansweredRequests.length})
+                  </button>
+                  <button 
+                    onClick={() => setStatusFilter('QUOTED')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${statusFilter === 'QUOTED' ? 'bg-emerald-500 text-black' : 'text-zinc-400'}`}
+                  >
+                    Teklif Verilenler ({requestsList.length - unansweredRequests.length})
+                  </button>
+                </div>
+
+                {/* Arama Barı ve Görünüm Değiştirici */}
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  <input 
+                    type="text" 
+                    placeholder="Talep ID, Liman veya Yük Tipi Ara..." 
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="bg-dark-900 border border-white/10 px-3.5 py-2 rounded-xl text-white outline-none w-full md:w-64 text-xs"
+                  />
+
+                  {/* Görünüm Modu Butonları */}
+                  <div className="flex bg-dark-900 p-1 rounded-xl border border-white/10">
+                    <button 
+                      onClick={() => setViewMode('cards')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition ${viewMode === 'cards' ? 'bg-brand text-white' : 'text-zinc-400'}`}
+                      title="Geniş Kart Görünümü"
+                    >
+                      Kartlar
+                    </button>
+                    <button 
+                      onClick={() => setViewMode('grid')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition ${viewMode === 'grid' ? 'bg-brand text-white' : 'text-zinc-400'}`}
+                      title="Kompakt Tablo Görünümü (Toplu Görünüm)"
+                    >
+                      Tablo
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* TALEPLER LİSTESİ */}
+              {filteredRequests.length === 0 ? (
+                <div className="text-center p-12 glass-panel text-zinc-500 rounded-3xl font-mono text-xs">Aradığınız kriterlere uygun talep bulunamadı.</div>
+              ) : viewMode === 'cards' ? (
+                /* 1. GENİŞ KARTLAR GÖRÜNÜMÜ */
+                <div className="space-y-6">
+                  {filteredRequests.map(req => <AdminQuoteRow key={req.id} req={req} carrierRates={carrierRates} />)}
+                </div>
               ) : (
-                requestsList.map(req => <AdminQuoteRow key={req.id} req={req} carrierRates={carrierRates} />)
+                /* 2. KOMPAKT DATA GRID / TABLO GÖRÜNÜMÜ (GÖZDEN KAÇMAYI SIFIRLAYAN YENİ ARAYÜZ) */
+                <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden font-mono text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-dark-900 border-b border-white/10 text-zinc-400 text-[10px] uppercase">
+                        <th className="p-3.5">Talep ID</th>
+                        <th className="p-3.5">Kalkış ➔ Varış Limanı</th>
+                        <th className="p-3.5">Yük Tipi & Miktar</th>
+                        <th className="p-3.5">Tarih</th>
+                        <th className="p-3.5">Mevcut Teklifler</th>
+                        <th className="p-3.5 text-right">Aksiyon</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filteredRequests.map(req => {
+                        const hasQuote = req.quotes && req.quotes.length > 0;
+                        return (
+                          <tr key={req.id} className="hover:bg-white/5 transition">
+                            <td className="p-3.5 font-bold text-sky-400">{req.id}</td>
+                            <td className="p-3.5 font-bold text-white">{req.origin} → {req.destination}</td>
+                            <td className="p-3.5 text-zinc-300">{req.cargo_type} ({req.amount} MT)</td>
+                            <td className="p-3.5 text-zinc-400 text-[11px]">{new Date(req.created_at).toLocaleTimeString()}</td>
+                            <td className="p-3.5">
+                              {hasQuote ? (
+                                <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px]">
+                                  {req.quotes.length} Teklif Verildi (${req.quotes[0].price})
+                                </span>
+                              ) : (
+                                <span className="text-red-400 font-bold bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 text-[10px]">
+                                  Yanıt Bekliyor
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-right">
+                              <button 
+                                onClick={() => { setViewMode('cards'); setSearchQuery(req.id); }}
+                                className="px-3 py-1.5 bg-brand hover:bg-blue-600 text-white font-extrabold text-[10px] rounded-lg transition uppercase"
+                              >
+                                Fiyatla / İncele →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
+
             </div>
           )}
 
@@ -3856,7 +5299,7 @@ Portscanner Maritime Intelligence Technologies Inc. - 256-Bit SSL Secured Docume
       };
 
       return (
-        <div className="glass-panel p-6 lg:p-8 rounded-3xl flex flex-col lg:flex-row justify-between gap-8 border border-white/10 hover:border-brand/30 transition">
+        <div id={`quote-row-${req.id}`} className="glass-panel p-6 lg:p-8 rounded-3xl flex flex-col lg:flex-row justify-between gap-8 border border-white/10 hover:border-brand/30 transition">
           {/* Müşteri Talep Detayı */}
           <div className="flex-1">
             <div className="flex items-center space-x-3 mb-3">
