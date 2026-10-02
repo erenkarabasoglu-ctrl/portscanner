@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://portscanner.com.tr/sitemap.xml
